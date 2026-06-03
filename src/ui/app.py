@@ -688,12 +688,8 @@ with tab_holidays:
     if st.button("Fetch Holidays"):
         country_upper = h_country.strip().upper()
         with st.spinner(f"Fetching holidays for {country_upper} {int(h_year)}..."):
-            from src.scheduler.holidays import (
-                _HOLIDAYS_LIB_COUNTRIES, _HOLIDAYS_LIB_AVAILABLE,
-                get_non_working_days_with_names,
-            )
-            hdays = get_non_working_days_with_names(country_upper, int(h_year))
-            source = "offline library" if country_upper in _HOLIDAYS_LIB_COUNTRIES else "Nager.Date API"
+            hdays = get_public_holidays_with_names(country_upper, int(h_year))
+            source = "offline library"
 
             if hdays:
                 rows = sorted(hdays.items())
@@ -703,20 +699,10 @@ with tab_holidays:
                 st.success(f"{len(hdays)} non-working days for {country_upper} {int(h_year)} (source: {source}).")
                 st.dataframe(df_h, use_container_width=True)
             else:
-                if not _HOLIDAYS_LIB_AVAILABLE:
-                    st.warning("The `holidays` Python library is not installed.")
-                elif country_upper not in _HOLIDAYS_LIB_COUNTRIES:
-                    st.warning(
-                        f"**{country_upper}** is not in the offline holidays library. "
-                        f"Tried Nager.Date API — no data returned. "
-                        f"Check: correct ISO 3166-1 alpha-2 code? (e.g. GB not UK, MX not MEX). "
-                        f"Network accessible?"
-                    )
-                else:
-                    st.warning(
-                        f"No holiday data returned for **{country_upper}** {int(h_year)}. "
-                        f"The offline library returned nothing — this country may have no public holidays defined."
-                    )
+                st.warning(
+                    f"No holiday data found for **{country_upper}** {int(h_year)}. "
+                    f"Check the country code is a valid ISO 3166-1 alpha-2 code (e.g. IL, GB, US, DE)."
+                )
 
     if st.session_state.people:
         st.markdown("---")
