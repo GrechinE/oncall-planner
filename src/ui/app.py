@@ -691,22 +691,25 @@ with tab_holidays:
             from src.scheduler.holidays import (
                 _HOLIDAYS_LIB_COUNTRIES, _HOLIDAYS_LIB_AVAILABLE,
                 _fetch_from_lib_with_names, _fetch_from_nager_with_names,
+                get_public_holidays_with_names, _holiday_cache,
             )
+            # Determine source label for display
+            _holiday_cache.pop((country_upper, int(h_year)), None)
             source = None
-            hdays = _fetch_from_lib_with_names(country_upper, int(h_year))
-            if hdays is not None:
+            if _fetch_from_lib_with_names(country_upper, int(h_year)) is not None:
                 source = "offline library"
-            else:
-                hdays = _fetch_from_nager_with_names(country_upper, int(h_year))
-                if hdays is not None:
-                    source = "Nager.Date API"
+            elif _fetch_from_nager_with_names(country_upper, int(h_year)) is not None:
+                source = "Nager.Date API"
+            # Use the canonical function so eves are included for IL etc.
+            _holiday_cache.pop((country_upper, int(h_year)), None)
+            hdays = get_public_holidays_with_names(country_upper, int(h_year))
 
             if hdays:
                 rows = sorted(hdays.items())
                 df_h = pd.DataFrame(rows, columns=["Date", "Holiday Name"])
                 df_h["Day"] = df_h["Date"].apply(lambda d: d.strftime("%A"))
                 df_h = df_h[["Date", "Day", "Holiday Name"]]
-                st.success(f"{len(hdays)} holidays for {country_upper} {int(h_year)} (source: {source}).")
+                st.success(f"{len(hdays)} non-working days for {country_upper} {int(h_year)} (source: {source}).")
                 st.dataframe(df_h, use_container_width=True)
             else:
                 if not _HOLIDAYS_LIB_AVAILABLE:
