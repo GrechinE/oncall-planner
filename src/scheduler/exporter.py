@@ -18,6 +18,7 @@ from .validator import violations_summary_text
 
 if TYPE_CHECKING:
     from .models import ScheduleResult, TeamConfig
+    from typing import Optional
 
 
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
@@ -50,12 +51,30 @@ def _holidays_in_week(countries: list[str], week_start: date, week_end: date) ->
     return "; ".join(seen)
 
 
-def build_schedule_dataframe(result: "ScheduleResult", team: "TeamConfig") -> pd.DataFrame:
-    """Return a DataFrame with one row per week (per region)."""
+def build_schedule_dataframe(
+    result: "ScheduleResult",
+    team: "TeamConfig",
+    manager_result: "Optional[ScheduleResult]" = None,
+    manager_team: "Optional[TeamConfig]" = None,
+) -> pd.DataFrame:
+    """Return a DataFrame with one row per week (per region).
+
+    If manager_result and manager_team are provided, a Duty Manager column is
+    merged in by matching on week_start.
+    """
+    from typing import Optional as _Opt
     person_map = {p.id: p for p in team.people}
     all_countries = list({p.country for p in team.people})
     has_backup = any(a.backup_id for a in result.schedule.assignments)
     has_regions = bool(result.schedule.config.required_regions)
+
+    # Build manager lookup: week_start -> manager name
+    manager_map: dict[date, str] = {}
+    if manager_result and manager_team:
+        mgr_person_map = {p.id: p for p in manager_team.people}
+        for ma in manager_result.schedule.assignments:
+            mgr = mgr_person_map.get(ma.primary_id) if ma.primary_id else None
+            manager_map[ma.week_start] = _safe(mgr.name if mgr else "UNASSIGNED")
 
     rows = []
     for a in result.schedule.assignments:
@@ -69,11 +88,13 @@ def build_schedule_dataframe(result: "ScheduleResult", team: "TeamConfig") -> pd
         }
         if has_regions:
             row["Region"] = _safe(a.region or "all")
-        row["Primary"] = _safe(primary.name if primary else "UNASSIGNED")
-        row["Primary Country"] = _safe(primary.country if primary else "")
+        row["Primary Engineer"] = _safe(primary.name if primary else "UNASSIGNED")
+        row["Engineer Country"] = _safe(primary.country if primary else "")
         if has_backup:
-            row["Backup"] = _safe(backup.name if backup else "")
+            row["Backup Engineer"] = _safe(backup.name if backup else "")
             row["Backup Country"] = _safe(backup.country if backup else "")
+        if manager_map:
+            row["Duty Manager"] = manager_map.get(a.week_start, "")
         row["Team Holidays"] = holidays
         row["Notes"] = _safe(a.notes)
 
@@ -103,26 +124,32 @@ def export_to_excel(
     result: "ScheduleResult",
     team: "TeamConfig",
     output_path: Union[str, Path, None] = None,
+    manager_result: "Optional[ScheduleResult]" = None,
+    manager_team: "Optional[TeamConfig]" = None,
 ) -> bytes:
     """
     Write schedule + fairness + violations to an .xlsx workbook.
     Returns the raw bytes. If output_path is provided, also writes to disk.
+    Optionally merges manager rotation into the Schedule sheet and adds a
+    Manager Fairness sheet.
     """
-    schedule_df = build_schedule_dataframe(result, team)
+    from typing import Optional as _Opt
+    schedule_df = build_schedule_dataframe(result, team, manager_result, manager_team)
     fairness_rows = compute_fairness(result, team)
     fairness_df = build_fairness_dataframe(fairness_rows)
-
     violations_text = violations_summary_text(result.violations)
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         schedule_df.to_excel(writer, sheet_name="Schedule", index=False)
-        fairness_df.to_excel(writer, sheet_name="Fairness", index=False)
+        fairness_df.to_excel(writer, sheet_name="Engineer Fairness", index=False)
 
-        # Violations as a plain-text sheet
-        violations_df = pd.DataFrame(
-            [{"Violations": violations_text}]
-        )
+        if manager_result and manager_team:
+            mgr_fairness_rows = compute_fairness(manager_result, manager_team)
+            mgr_fairness_df = build_fairness_dataframe(mgr_fairness_rows)
+            mgr_fairness_df.to_excel(writer, sheet_name="Manager Fairness", index=False)
+
+        violations_df = pd.DataFrame([{"Violations": violations_text}])
         violations_df.to_excel(writer, sheet_name="Violations", index=False)
 
         _autofit_columns(writer)
@@ -137,9 +164,11 @@ def export_to_csv(
     result: "ScheduleResult",
     team: "TeamConfig",
     output_path: Union[str, Path, None] = None,
+    manager_result: "Optional[ScheduleResult]" = None,
+    manager_team: "Optional[TeamConfig]" = None,
 ) -> str:
     """Return schedule as CSV string and optionally write to disk."""
-    df = build_schedule_dataframe(result, team)
+    df = build_schedule_dataframe(result, team, manager_result, manager_team)
     csv = df.to_csv(index=False)
     if output_path:
         Path(output_path).write_text(csv, encoding="utf-8")
@@ -150,6 +179,8 @@ def export_to_ical(
     result: "ScheduleResult",
     team: "TeamConfig",
     output_path: Union[str, Path, None] = None,
+    manager_result: "Optional[ScheduleResult]" = None,
+    manager_team: "Optional[TeamConfig]" = None,
 ) -> str:
     """
     Return an iCalendar (.ics) string with one VEVENT per week.
@@ -161,6 +192,14 @@ def export_to_ical(
     person_map = {p.id: p for p in team.people}
     all_countries = list({p.country for p in team.people})
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    # Build manager lookup by week_start
+    mgr_map: dict[date, str] = {}
+    if manager_result and manager_team:
+        mgr_person_map = {p.id: p for p in manager_team.people}
+        for ma in manager_result.schedule.assignments:
+            mgr = mgr_person_map.get(ma.primary_id) if ma.primary_id else None
+            mgr_map[ma.week_start] = mgr.name if mgr else "UNASSIGNED"
 
     lines: list[str] = [
         "BEGIN:VCALENDAR",
@@ -185,9 +224,11 @@ def export_to_ical(
 
         desc_parts = []
         if primary:
-            desc_parts.append(f"Primary: {primary.name} ({primary.country})")
+            desc_parts.append(f"Primary Engineer: {primary.name} ({primary.country})")
         if backup:
-            desc_parts.append(f"Backup: {backup.name} ({backup.country})")
+            desc_parts.append(f"Backup Engineer: {backup.name} ({backup.country})")
+        if mgr_map:
+            desc_parts.append(f"Duty Manager: {mgr_map.get(a.week_start, '')}")
         holidays = _holidays_in_week(all_countries, a.week_start, a.week_end)
         if holidays:
             desc_parts.append(f"Holidays: {holidays}")

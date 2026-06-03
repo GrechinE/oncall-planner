@@ -10,7 +10,7 @@ def test_export_to_csv_returns_string(simple_team):
     csv = export_to_csv(result, simple_team)
     assert isinstance(csv, str)
     assert "Week Start" in csv
-    assert "Primary" in csv
+    assert "Primary Engineer" in csv
     assert "Team Holidays" in csv
 
 
@@ -34,7 +34,7 @@ def test_export_excel_has_all_sheets(simple_team):
     raw = export_to_excel(result, simple_team)
     xl = pd.ExcelFile(io.BytesIO(raw))
     assert "Schedule" in xl.sheet_names
-    assert "Fairness" in xl.sheet_names
+    assert "Engineer Fairness" in xl.sheet_names
     assert "Violations" in xl.sheet_names
 
 
@@ -43,7 +43,7 @@ def test_schedule_dataframe_no_nulls_in_key_columns(simple_team):
     df = build_schedule_dataframe(result, simple_team)
     assert df["Week Start"].notna().all()
     assert df["Week End"].notna().all()
-    assert df["Primary"].notna().all()
+    assert df["Primary Engineer"].notna().all()
     assert "Team Holidays" in df.columns
 
 
@@ -84,6 +84,55 @@ def test_export_to_ical_event_structure(simple_team):
     assert "DTEND;VALUE=DATE:" in ical
     assert "SUMMARY:On-Call:" in ical
     assert "UID:" in ical
+
+
+def test_schedule_dataframe_with_manager_column(simple_team):
+    """Duty Manager column appears when manager_result is provided."""
+    from src.scheduler.models import Person, ScheduleConfig, ShiftStartDay, TeamConfig
+    from datetime import date
+    mgr_config = ScheduleConfig(
+        start_date=date(2026, 1, 4),
+        end_date=date(2026, 3, 29),
+        shift_duration_days=7,
+        shift_start_day=ShiftStartDay.sunday,
+        min_gap_between_shifts_weeks=2,
+    )
+    managers = [
+        Person(id="mgr1", name="Manager One", country="US", timezone="America/New_York", regions=[], skills=[]),
+        Person(id="mgr2", name="Manager Two", country="GB", timezone="Europe/London", regions=[], skills=[]),
+    ]
+    mgr_team = TeamConfig(schedule=mgr_config, people=managers)
+    mgr_result = ScheduleGenerator(mgr_team).generate()
+
+    eng_result = ScheduleGenerator(simple_team).generate()
+    df = build_schedule_dataframe(eng_result, simple_team, mgr_result, mgr_team)
+    assert "Duty Manager" in df.columns
+    assert df["Duty Manager"].notna().all()
+
+
+def test_export_excel_with_manager_has_two_fairness_sheets(simple_team):
+    """Excel export includes both Engineer Fairness and Manager Fairness sheets."""
+    from src.scheduler.models import Person, ScheduleConfig, ShiftStartDay, TeamConfig
+    from datetime import date
+    mgr_config = ScheduleConfig(
+        start_date=date(2026, 1, 4),
+        end_date=date(2026, 3, 29),
+        shift_duration_days=7,
+        shift_start_day=ShiftStartDay.sunday,
+        min_gap_between_shifts_weeks=2,
+    )
+    managers = [
+        Person(id="mgr1", name="Manager One", country="US", timezone="America/New_York", regions=[], skills=[]),
+        Person(id="mgr2", name="Manager Two", country="GB", timezone="Europe/London", regions=[], skills=[]),
+    ]
+    mgr_team = TeamConfig(schedule=mgr_config, people=managers)
+    mgr_result = ScheduleGenerator(mgr_team).generate()
+
+    eng_result = ScheduleGenerator(simple_team).generate()
+    raw = export_to_excel(eng_result, simple_team, manager_result=mgr_result, manager_team=mgr_team)
+    xl = pd.ExcelFile(io.BytesIO(raw))
+    assert "Engineer Fairness" in xl.sheet_names
+    assert "Manager Fairness" in xl.sheet_names
 
 
 def test_export_csv_formula_injection_in_name(simple_team):

@@ -20,7 +20,9 @@ import pandas as pd
 import streamlit as st
 from streamlit_local_storage import LocalStorage
 
-from src.scheduler.exporter import export_to_csv, export_to_excel, export_to_ical, build_schedule_dataframe
+from src.scheduler.exporter import (
+    export_to_csv, export_to_excel, export_to_ical, build_schedule_dataframe,
+)
 from src.scheduler.fairness import compute_fairness
 from src.scheduler.generator import ScheduleGenerator
 from src.scheduler.holidays import get_public_holidays_with_names
@@ -42,11 +44,16 @@ def _cached_holidays(country: str, year: int):
 
 
 @st.cache_data(show_spinner=False)
-def _cached_schedule_df(result_json: str, people_json: str) -> pd.DataFrame:
+def _cached_schedule_df(
+    result_json: str, people_json: str,
+    mgr_result_json: str = "", mgr_people_json: str = "",
+) -> pd.DataFrame:
     from src.scheduler.models import ScheduleResult, TeamConfig
     result = ScheduleResult.model_validate_json(result_json)
     team   = TeamConfig.model_validate_json(people_json)
-    return build_schedule_dataframe(result, team)
+    mgr_result = ScheduleResult.model_validate_json(mgr_result_json) if mgr_result_json else None
+    mgr_team   = TeamConfig.model_validate_json(mgr_people_json) if mgr_people_json else None
+    return build_schedule_dataframe(result, team, mgr_result, mgr_team)
 
 
 @st.cache_data(show_spinner=False)
@@ -58,27 +65,42 @@ def _cached_fairness(result_json: str, people_json: str):
 
 
 @st.cache_data(show_spinner=False)
-def _cached_export_excel(result_json: str, people_json: str) -> bytes:
+def _cached_export_excel(
+    result_json: str, people_json: str,
+    mgr_result_json: str = "", mgr_people_json: str = "",
+) -> bytes:
     from src.scheduler.models import ScheduleResult, TeamConfig
     result = ScheduleResult.model_validate_json(result_json)
     team   = TeamConfig.model_validate_json(people_json)
-    return export_to_excel(result, team)
+    mgr_result = ScheduleResult.model_validate_json(mgr_result_json) if mgr_result_json else None
+    mgr_team   = TeamConfig.model_validate_json(mgr_people_json) if mgr_people_json else None
+    return export_to_excel(result, team, manager_result=mgr_result, manager_team=mgr_team)
 
 
 @st.cache_data(show_spinner=False)
-def _cached_export_csv(result_json: str, people_json: str) -> str:
+def _cached_export_csv(
+    result_json: str, people_json: str,
+    mgr_result_json: str = "", mgr_people_json: str = "",
+) -> str:
     from src.scheduler.models import ScheduleResult, TeamConfig
     result = ScheduleResult.model_validate_json(result_json)
     team   = TeamConfig.model_validate_json(people_json)
-    return export_to_csv(result, team)
+    mgr_result = ScheduleResult.model_validate_json(mgr_result_json) if mgr_result_json else None
+    mgr_team   = TeamConfig.model_validate_json(mgr_people_json) if mgr_people_json else None
+    return export_to_csv(result, team, manager_result=mgr_result, manager_team=mgr_team)
 
 
 @st.cache_data(show_spinner=False)
-def _cached_export_ical(result_json: str, people_json: str) -> str:
+def _cached_export_ical(
+    result_json: str, people_json: str,
+    mgr_result_json: str = "", mgr_people_json: str = "",
+) -> str:
     from src.scheduler.models import ScheduleResult, TeamConfig
     result = ScheduleResult.model_validate_json(result_json)
     team   = TeamConfig.model_validate_json(people_json)
-    return export_to_ical(result, team)
+    mgr_result = ScheduleResult.model_validate_json(mgr_result_json) if mgr_result_json else None
+    mgr_team   = TeamConfig.model_validate_json(mgr_people_json) if mgr_people_json else None
+    return export_to_ical(result, team, manager_result=mgr_result, manager_team=mgr_team)
 
 
 def _next_monday() -> date:
@@ -123,14 +145,22 @@ with st.expander("👋 How it works", expanded=False):
 # ─────────────────────────────────────────────
 if "people" not in st.session_state:
     st.session_state.people = []
+if "managers" not in st.session_state:
+    st.session_state.managers = []
 if "result" not in st.session_state:
     st.session_state.result = None
 if "team" not in st.session_state:
     st.session_state.team = None
+if "mgr_result" not in st.session_state:
+    st.session_state.mgr_result = None
+if "mgr_team" not in st.session_state:
+    st.session_state.mgr_team = None
 if "_ls_loaded" not in st.session_state:
     st.session_state._ls_loaded = False
 if "edit_idx" not in st.session_state:
     st.session_state.edit_idx = None
+if "edit_mgr_idx" not in st.session_state:
+    st.session_state.edit_mgr_idx = None
 
 # ─────────────────────────────────────────────
 # Browser localStorage — persist team across sessions
@@ -141,6 +171,9 @@ if not st.session_state._ls_loaded:
     _saved = _ls.getItem("oncall_people")
     if _saved and isinstance(_saved, list) and len(_saved) > 0:
         st.session_state.people = _saved
+    _saved_mgr = _ls.getItem("oncall_managers")
+    if _saved_mgr and isinstance(_saved_mgr, list) and len(_saved_mgr) > 0:
+        st.session_state.managers = _saved_mgr
     st.session_state._ls_loaded = True
 
 # ─────────────────────────────────────────────
@@ -157,7 +190,7 @@ with st.sidebar:
     end_date = st.date_input("End Date", value=_default_end,
                              help="Shifts are generated up to (and including) this date.")
 
-    with st.expander("Advanced settings", expanded=False):
+    with st.expander("Engineer settings", expanded=False):
         shift_duration = st.number_input("Shift Duration (days)", min_value=1, max_value=28, value=7,
                                          help="How many days each on-call shift lasts. Default: 7 (weekly).")
         shift_start = st.selectbox("Shift Start Day", ["sunday", "monday"],
@@ -176,6 +209,17 @@ with st.sidebar:
             "Generate backup on-call",
             value=False,
             help="Off = primary-only. Add backup on demand from the Schedule tab.",
+        )
+
+    with st.expander("Manager settings", expanded=False):
+        mgr_min_gap = st.number_input(
+            "Manager Min Gap (weeks)", min_value=1, max_value=12, value=4,
+            help="Minimum weeks between two duty-manager shifts for the same manager.",
+        )
+        mgr_shift_start = st.selectbox(
+            "Manager Shift Start Day", ["sunday", "monday"],
+            key="mgr_shift_start",
+            help="Which day the manager duty week starts.",
         )
 
     st.markdown("---")
@@ -205,8 +249,8 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 # Tab layout
 # ─────────────────────────────────────────────
-tab_team, tab_holidays, tab_generate, tab_schedule, tab_fairness, tab_violations, tab_export = st.tabs([
-    "👥 Team", "🗓 Holidays", "⚡ Generate", "📋 Schedule", "⚖️ Fairness", "⚠️ Violations", "📤 Export"
+tab_team, tab_managers, tab_holidays, tab_generate, tab_schedule, tab_fairness, tab_violations, tab_export = st.tabs([
+    "👥 Engineers", "🧑‍💼 Managers", "🗓 Holidays", "⚡ Generate", "📋 Schedule", "⚖️ Fairness", "⚠️ Violations", "📤 Export"
 ])
 
 # ─────────────────────────────────────────────
@@ -404,6 +448,146 @@ with tab_team:
         st.info("No team members yet. Add people above or load the sample dataset from the sidebar.")
 
 # ─────────────────────────────────────────────
+# TAB: Managers
+# ─────────────────────────────────────────────
+with tab_managers:
+    st.subheader("Duty Managers")
+    st.caption("Managers rotate independently from engineers. Add your manager pool here.")
+
+    _editing_mgr = st.session_state.edit_mgr_idx is not None
+    _edit_mgr = st.session_state.managers[st.session_state.edit_mgr_idx] if _editing_mgr else {}
+
+    with st.expander(
+        f"✏️ Edit: {_edit_mgr.get('name', '')}" if _editing_mgr else "➕ Add Manager",
+        expanded=_editing_mgr or len(st.session_state.managers) == 0,
+    ):
+        m_name = st.text_input("Full Name", value=_edit_mgr.get("name", ""), key="new_mgr_name")
+        m_country = st.text_input("Country (ISO code)", value=_edit_mgr.get("country", ""),
+                                  key="new_mgr_country", max_chars=3)
+        m_tz = st.text_input("Timezone (IANA)", value=_edit_mgr.get("timezone", ""), key="new_mgr_tz")
+        m_blackouts = st.text_input("Blackout Dates (YYYY-MM-DD, comma-separated)",
+                                    value=", ".join(_edit_mgr.get("blackout_dates", [])), key="new_mgr_blackouts")
+        _mgr_max_default = _edit_mgr.get("max_shifts_per_year") or 12
+        m_max = st.number_input("Max Duty Weeks/Year (0 = unlimited)", min_value=0,
+                                value=int(_mgr_max_default), key="new_mgr_max")
+
+        mbtn1, mbtn2 = st.columns(2)
+        with mbtn1:
+            _mlabel = "💾 Save Changes" if _editing_mgr else "Add Manager"
+            if st.button(_mlabel, type="primary", key="btn_add_mgr"):
+                if not m_name or not m_country or not m_tz:
+                    st.error("Name, Country and Timezone are required.")
+                else:
+                    import re as _re
+                    base_id = _re.sub(r"[^a-z0-9]+", "-", m_name.strip().lower()).strip("-")
+                    existing_ids = {p["id"] for i, p in enumerate(st.session_state.managers)
+                                    if not _editing_mgr or i != st.session_state.edit_mgr_idx}
+                    new_id = base_id
+                    counter = 2
+                    while new_id in existing_ids:
+                        new_id = f"{base_id}-{counter}"
+                        counter += 1
+
+                    mgr_data = {
+                        "id": _edit_mgr.get("id", new_id) if _editing_mgr else new_id,
+                        "name": m_name,
+                        "country": m_country.upper(),
+                        "timezone": m_tz,
+                        "regions": [],
+                        "skills": [],
+                        "blackout_dates": [b.strip() for b in m_blackouts.split(",") if b.strip()],
+                        "max_shifts_per_year": int(m_max) if m_max > 0 else None,
+                    }
+                    if _editing_mgr:
+                        st.session_state.managers[st.session_state.edit_mgr_idx] = mgr_data
+                        st.session_state.edit_mgr_idx = None
+                        st.success(f"Updated {m_name}.")
+                    else:
+                        st.session_state.managers.append(mgr_data)
+                        st.success(f"Added manager {m_name}.")
+                    _ls.setItem("oncall_managers", st.session_state.managers)
+                    st.rerun()
+        with mbtn2:
+            if _editing_mgr and st.button("Cancel", type="secondary", key="btn_cancel_mgr"):
+                st.session_state.edit_mgr_idx = None
+                st.rerun()
+
+    # CSV upload for managers
+    mgr_csv = st.file_uploader("Upload managers.csv", type=["csv"], key="mgr_csv")
+    if mgr_csv is not None:
+        try:
+            df_mgr = pd.read_csv(mgr_csv, dtype=str).fillna("")
+            st.caption(f"{len(df_mgr)} rows found in **{mgr_csv.name}**")
+            st.dataframe(df_mgr[["id", "name", "country"]].head(10), use_container_width=True)
+            if st.button(f"✅ Import {len(df_mgr)} managers", type="primary", key="btn_import_mgr_csv"):
+                added = 0
+                skipped = []
+                existing_ids = {p["id"] for p in st.session_state.managers}
+                for _, row in df_mgr.iterrows():
+                    pid = str(row.get("id", "")).strip()
+                    name = str(row.get("name", "")).strip()
+                    if not pid or not name:
+                        skipped.append(f"Row missing id/name — skipped")
+                        continue
+                    if pid in existing_ids:
+                        skipped.append(f"Duplicate ID '{pid}' ({name}) — skipped")
+                        continue
+                    blackouts_l = [b.strip() for b in str(row.get("blackout_dates", "")).split(",") if b.strip()]
+                    max_raw = str(row.get("max_shifts_per_year", "")).strip()
+                    st.session_state.managers.append({
+                        "id": pid,
+                        "name": name,
+                        "country": str(row.get("country", "")).strip().upper(),
+                        "timezone": str(row.get("timezone", "")).strip(),
+                        "regions": [],
+                        "skills": [],
+                        "blackout_dates": blackouts_l,
+                        "max_shifts_per_year": int(max_raw) if max_raw.isdigit() else None,
+                    })
+                    existing_ids.add(pid)
+                    added += 1
+                st.success(f"Imported {added} managers.")
+                for msg in skipped:
+                    st.warning(msg)
+                _ls.setItem("oncall_managers", st.session_state.managers)
+                st.rerun()
+        except Exception as exc:
+            st.error(f"Failed to read CSV: {exc}")
+
+    if st.session_state.managers:
+        st.markdown(f"**{len(st.session_state.managers)} managers**")
+        for i, m in enumerate(st.session_state.managers):
+            col_data, col_edit, col_del = st.columns([11, 1, 1])
+            with col_data:
+                st.write(
+                    f"**{m['name']}** ({m['id']}) — {m['country']} · {m['timezone']} · "
+                    f"max duty weeks: {m.get('max_shifts_per_year') or '∞'}"
+                )
+            with col_edit:
+                if st.button("✏️", key=f"edit_mgr_{i}", help=f"Edit {m['name']}"):
+                    st.session_state.edit_mgr_idx = i
+                    st.rerun()
+            with col_del:
+                if st.button("✕", key=f"del_mgr_{i}", help=f"Remove {m['name']}"):
+                    st.session_state.managers.pop(i)
+                    if st.session_state.edit_mgr_idx is not None:
+                        if st.session_state.edit_mgr_idx == i:
+                            st.session_state.edit_mgr_idx = None
+                        elif st.session_state.edit_mgr_idx > i:
+                            st.session_state.edit_mgr_idx -= 1
+                    _ls.setItem("oncall_managers", st.session_state.managers)
+                    st.rerun()
+
+        if st.button("🗑 Clear All Managers", type="secondary", key="btn_clear_mgrs"):
+            st.session_state.managers = []
+            st.session_state.edit_mgr_idx = None
+            _ls.setItem("oncall_managers", [])
+            st.rerun()
+    else:
+        st.info("No managers yet. Add managers above or upload a CSV.")
+
+
+# ─────────────────────────────────────────────
 # TAB: Holidays Preview
 # ─────────────────────────────────────────────
 with tab_holidays:
@@ -490,6 +674,11 @@ with tab_generate:
         st.write(f"**Regions:** {', '.join(required_regions) if required_regions else 'global (single pool)'}")
         st.write(f"**Shift:** {shift_duration} days, starting {shift_start}, min gap {min_gap} weeks")
 
+        if st.session_state.managers:
+            st.write(f"**Managers:** {len(st.session_state.managers)} people in duty rotation")
+        else:
+            st.info("No managers added yet — only engineer schedule will be generated. Add managers in the Managers tab.")
+
         if st.button("⚡ Generate Schedule", type="primary"):
             try:
                 config = ScheduleConfig(
@@ -504,7 +693,7 @@ with tab_generate:
                 people = [Person.model_validate(p) for p in st.session_state.people]
                 team = TeamConfig(schedule=config, people=people)
 
-                with st.spinner("Generating..."):
+                with st.spinner("Generating engineer schedule..."):
                     generator = ScheduleGenerator(team)
                     result = generator.generate()
                     result.violations = validate(result, team)
@@ -512,15 +701,39 @@ with tab_generate:
                 st.session_state.result = result
                 st.session_state.team = team
 
+                # Generate manager rotation if managers are configured
+                if st.session_state.managers:
+                    with st.spinner("Generating manager rotation..."):
+                        mgr_config = ScheduleConfig(
+                            start_date=start_date,
+                            end_date=end_date,
+                            shift_duration_days=shift_duration,
+                            shift_start_day=ShiftStartDay(mgr_shift_start),
+                            min_gap_between_shifts_weeks=mgr_min_gap,
+                            required_regions=[],
+                            generate_backup=False,
+                        )
+                        managers = [Person.model_validate(m) for m in st.session_state.managers]
+                        mgr_team = TeamConfig(schedule=mgr_config, people=managers)
+                        mgr_result = ScheduleGenerator(mgr_team).generate()
+                        mgr_result.violations = validate(mgr_result, mgr_team)
+                    st.session_state.mgr_result = mgr_result
+                    st.session_state.mgr_team = mgr_team
+                else:
+                    st.session_state.mgr_result = None
+                    st.session_state.mgr_team = None
+
                 errors = sum(1 for v in result.violations if v.severity == "error")
                 warnings = sum(1 for v in result.violations if v.severity == "warning")
                 n_weeks = len(result.schedule.assignments)
 
                 if errors == 0:
-                    st.success(
-                        f"Schedule generated: {n_weeks} weeks ({start_date} → {end_date}), "
-                        f"0 errors, {warnings} warnings. Head to the Schedule tab to review."
-                    )
+                    msg = (f"Schedule generated: {n_weeks} weeks ({start_date} → {end_date}), "
+                           f"0 errors, {warnings} warnings.")
+                    if st.session_state.mgr_result:
+                        mgr_errors = sum(1 for v in st.session_state.mgr_result.violations if v.severity == "error")
+                        msg += f" Manager rotation: {mgr_errors} errors."
+                    st.success(msg + " Head to the Schedule tab to review.")
                 else:
                     st.error(
                         f"Schedule generated with {errors} errors and {warnings} warnings. "
@@ -542,8 +755,10 @@ with tab_schedule:
         team = st.session_state.team
         _result_json = result.model_dump_json()
         _team_json   = team.model_dump_json()
+        _mgr_result_json = st.session_state.mgr_result.model_dump_json() if st.session_state.mgr_result else ""
+        _mgr_team_json   = st.session_state.mgr_team.model_dump_json() if st.session_state.mgr_team else ""
 
-        # Summary line — fix #5
+        # Summary line
         n_weeks = len(result.schedule.assignments)
         cfg = result.schedule.config
         st.caption(
@@ -586,10 +801,10 @@ with tab_schedule:
                 st.session_state.result = result
                 st.rerun()
 
-        df_sched = _cached_schedule_df(_result_json, _team_json)
+        df_sched = _cached_schedule_df(_result_json, _team_json, _mgr_result_json, _mgr_team_json)
 
-        if "Primary" in df_sched.columns:
-            df_sched["Primary"] = df_sched["Primary"].replace("UNASSIGNED", "⚠️ UNASSIGNED")
+        if "Primary Engineer" in df_sched.columns:
+            df_sched["Primary Engineer"] = df_sched["Primary Engineer"].replace("UNASSIGNED", "⚠️ UNASSIGNED")
 
         active_regions = result.schedule.config.required_regions
         if active_regions and "Region" in df_sched.columns:
@@ -599,14 +814,15 @@ with tab_schedule:
 
         row_height = 35 * len(df_sched) + 38
         col_cfg = {
-            "Week Start":      st.column_config.TextColumn(width="small"),
-            "Week End":        st.column_config.TextColumn(width="small"),
-            "Primary":         st.column_config.TextColumn(width="medium"),
-            "Primary Country": st.column_config.TextColumn("Country", width="small"),
-            "Backup":          st.column_config.TextColumn(width="medium"),
-            "Backup Country":  st.column_config.TextColumn("B.Country", width="small"),
-            "Team Holidays":   st.column_config.TextColumn(width="large"),
-            "Notes":           st.column_config.TextColumn(width="small"),
+            "Week Start":        st.column_config.TextColumn(width="small"),
+            "Week End":          st.column_config.TextColumn(width="small"),
+            "Primary Engineer":  st.column_config.TextColumn(width="medium"),
+            "Engineer Country":  st.column_config.TextColumn("Country", width="small"),
+            "Backup Engineer":   st.column_config.TextColumn(width="medium"),
+            "Backup Country":    st.column_config.TextColumn("B.Country", width="small"),
+            "Duty Manager":      st.column_config.TextColumn(width="medium"),
+            "Team Holidays":     st.column_config.TextColumn(width="large"),
+            "Notes":             st.column_config.TextColumn(width="small"),
         }
         st.dataframe(
             df_sched,
@@ -628,8 +844,9 @@ with tab_fairness:
         team = st.session_state.team
         _result_json = result.model_dump_json()
         _team_json   = team.model_dump_json()
-        fairness_rows = _cached_fairness(_result_json, _team_json)
 
+        st.markdown("#### Engineer Fairness")
+        fairness_rows = _cached_fairness(_result_json, _team_json)
         df_fair = pd.DataFrame([
             {
                 "Name": r.name,
@@ -642,21 +859,41 @@ with tab_fairness:
             }
             for r in fairness_rows
         ])
-
         st.dataframe(df_fair, use_container_width=True)
-
         max_dev = max(abs(r.deviation) for r in fairness_rows) if fairness_rows else 0
         if max_dev <= 1:
             st.success(f"Distribution is very fair (max deviation: {max_dev:.1f} shifts).")
         elif max_dev <= 2:
             st.info(f"Distribution is acceptable (max deviation: {max_dev:.1f} shifts).")
         else:
-            st.warning(
-                f"Distribution has notable imbalance (max deviation: {max_dev:.1f} shifts). "
-                f"Check the table for outliers."
-            )
-
+            st.warning(f"Distribution has notable imbalance (max deviation: {max_dev:.1f} shifts).")
         st.bar_chart(df_fair.set_index("Name")["Primary Shifts"])
+
+        if st.session_state.mgr_result and st.session_state.mgr_team:
+            st.markdown("#### Manager Fairness")
+            _mgr_result_json = st.session_state.mgr_result.model_dump_json()
+            _mgr_team_json   = st.session_state.mgr_team.model_dump_json()
+            mgr_fairness_rows = _cached_fairness(_mgr_result_json, _mgr_team_json)
+            df_mgr_fair = pd.DataFrame([
+                {
+                    "Name": r.name,
+                    "Country": r.country,
+                    "Duty Weeks": r.primary_shifts,
+                    "Expected": r.expected_primary,
+                    "Deviation": r.deviation,
+                    "Holiday Weeks": r.holiday_weeks,
+                }
+                for r in mgr_fairness_rows
+            ])
+            st.dataframe(df_mgr_fair, use_container_width=True)
+            mgr_max_dev = max(abs(r.deviation) for r in mgr_fairness_rows) if mgr_fairness_rows else 0
+            if mgr_max_dev <= 1:
+                st.success(f"Manager distribution is very fair (max deviation: {mgr_max_dev:.1f} weeks).")
+            elif mgr_max_dev <= 2:
+                st.info(f"Manager distribution is acceptable (max deviation: {mgr_max_dev:.1f} weeks).")
+            else:
+                st.warning(f"Manager distribution has notable imbalance (max deviation: {mgr_max_dev:.1f} weeks).")
+            st.bar_chart(df_mgr_fair.set_index("Name")["Duty Weeks"])
 
 # ─────────────────────────────────────────────
 # TAB: Violations
@@ -701,11 +938,13 @@ with tab_export:
         team = st.session_state.team
         _result_json = result.model_dump_json()
         _team_json   = team.model_dump_json()
+        _mgr_result_json = st.session_state.mgr_result.model_dump_json() if st.session_state.mgr_result else ""
+        _mgr_team_json   = st.session_state.mgr_team.model_dump_json() if st.session_state.mgr_team else ""
 
         col_xl, col_csv_btn, col_ical = st.columns(3)
 
         with col_xl:
-            xlsx_bytes = _cached_export_excel(_result_json, _team_json)
+            xlsx_bytes = _cached_export_excel(_result_json, _team_json, _mgr_result_json, _mgr_team_json)
             st.download_button(
                 label="⬇️ Download Excel (.xlsx)",
                 data=xlsx_bytes,
@@ -714,7 +953,7 @@ with tab_export:
             )
 
         with col_csv_btn:
-            csv_str = _cached_export_csv(_result_json, _team_json)
+            csv_str = _cached_export_csv(_result_json, _team_json, _mgr_result_json, _mgr_team_json)
             st.download_button(
                 label="⬇️ Download CSV",
                 data=csv_str,
@@ -723,7 +962,7 @@ with tab_export:
             )
 
         with col_ical:
-            ical_str = _cached_export_ical(_result_json, _team_json)
+            ical_str = _cached_export_ical(_result_json, _team_json, _mgr_result_json, _mgr_team_json)
             st.download_button(
                 label="⬇️ Download iCal (.ics)",
                 data=ical_str,
