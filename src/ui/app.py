@@ -690,14 +690,21 @@ with tab_holidays:
         with st.spinner(f"Fetching holidays for {country_upper} {int(h_year)}..."):
             from src.scheduler.holidays import (
                 _HOLIDAYS_LIB_COUNTRIES, _HOLIDAYS_LIB_AVAILABLE,
-                _fetch_from_lib_with_names, _holiday_cache,
-                get_public_holidays_with_names,
+                _fetch_from_lib_with_names, _fetch_from_nager_with_names,
+                _add_holiday_eves, _COUNTRIES_WITH_HOLIDAY_EVES, _holiday_cache,
             )
-            # Clear module-level cache so we get a fresh result
+            # Always fetch fresh — bypass all caches
             _holiday_cache.pop((country_upper, int(h_year)), None)
-            hdays = get_public_holidays_with_names(country_upper, int(h_year))
-            # Determine source label for display only
-            source = "offline library" if country_upper in _HOLIDAYS_LIB_COUNTRIES and _fetch_from_lib_with_names(country_upper, int(h_year)) is not None else "Nager.Date API"
+            raw = _fetch_from_lib_with_names(country_upper, int(h_year))
+            source = "offline library"
+            if raw is None:
+                raw = _fetch_from_nager_with_names(country_upper, int(h_year))
+                source = "Nager.Date API"
+            # Apply eves directly here so we don't depend on cache state
+            if raw is not None and country_upper in _COUNTRIES_WITH_HOLIDAY_EVES:
+                hdays = _add_holiday_eves(raw)
+            else:
+                hdays = raw
 
             if hdays:
                 rows = sorted(hdays.items())
