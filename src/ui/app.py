@@ -33,6 +33,7 @@ from src.scheduler.models import (
     TeamConfig,
 )
 from src.scheduler.validator import validate
+from src.ui.themes import THEMES, detect_theme, inject_theme
 
 
 # ─────────────────────────────────────────────
@@ -130,6 +131,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ─────────────────────────────────────────────
+# Theme — detect and inject before any other rendering
+# ─────────────────────────────────────────────
+if "_theme" not in st.session_state:
+    st.session_state._theme = detect_theme()
+inject_theme(st.session_state._theme)
 
 st.title("📅 OnCall Planner")
 st.caption("Fair, holiday-aware on-call scheduling for any global team — engineering, ops, support, and more.")
@@ -275,6 +283,22 @@ with st.sidebar:
             st.session_state.people = data["people"]
             _ls.setItem("oncall_people", data["people"])
             st.success(f"Loaded {len(st.session_state.people)} people.")
+
+    st.markdown("---")
+    st.header("🎨 Theme")
+    _theme_options = {k: f"{v['emoji']} {v['name']}" for k, v in THEMES.items()}
+    _current_idx = list(_theme_options.keys()).index(st.session_state._theme)
+    _selected_theme = st.selectbox(
+        "Colour theme",
+        options=list(_theme_options.keys()),
+        format_func=lambda k: _theme_options[k],
+        index=_current_idx,
+        key="theme_selector",
+        label_visibility="collapsed",
+    )
+    if _selected_theme != st.session_state._theme:
+        st.session_state._theme = _selected_theme
+        st.rerun()
 
 # ─────────────────────────────────────────────
 # Tab layout
