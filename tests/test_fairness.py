@@ -2,6 +2,23 @@ from src.scheduler.generator import ScheduleGenerator
 from src.scheduler.fairness import compute_fairness
 
 
+def test_fairness_expected_uses_calendar_weeks_not_assignment_rows(multi_region_team):
+    """For a 3-region team, expected_primary must equal calendar_weeks/n_people,
+    NOT assignment_rows/n_people (which would be 3x too high)."""
+    result = ScheduleGenerator(multi_region_team).generate()
+    rows = compute_fairness(result, multi_region_team)
+
+    assignments = result.schedule.assignments
+    unique_weeks = len({a.week_start for a in assignments})
+    n_people = len(multi_region_team.people)
+    expected_correct = round(unique_weeks / n_people, 2)
+
+    for r in rows:
+        assert r.expected_primary == expected_correct, (
+            f"{r.name}: expected_primary={r.expected_primary}, should be {expected_correct}"
+        )
+
+
 def test_fairness_no_person_starved(simple_team):
     generator = ScheduleGenerator(simple_team)
     result = generator.generate()

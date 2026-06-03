@@ -103,6 +103,17 @@ def _cached_export_ical(
     return export_to_ical(result, team, manager_result=mgr_result, manager_team=mgr_team)
 
 
+def _schedule_is_stale() -> bool:
+    """True if the team list has changed since the last Generate run."""
+    if st.session_state.get("result") is None:
+        return False
+    snapshot = st.session_state.get("_gen_team_snapshot")
+    if snapshot is None:
+        return False
+    current = json.dumps([p for p in st.session_state.people], sort_keys=True)
+    return current != snapshot
+
+
 def _next_monday() -> date:
     today = date.today()
     days_ahead = (7 - today.weekday()) % 7  # weekday(): Mon=0, Sun=6
@@ -123,7 +134,7 @@ st.set_page_config(
 st.title("📅 OnCall Planner")
 st.caption("Fair, holiday-aware on-call scheduling for any global team — engineering, ops, support, and more.")
 
-with st.expander("👋 How it works", expanded=False):
+with st.expander("👋 How it works", expanded=not st.session_state.get("_ls_loaded", False)):
     st.markdown(
         """
         **Three steps to a complete on-call schedule:**
@@ -161,6 +172,10 @@ if "edit_idx" not in st.session_state:
     st.session_state.edit_idx = None
 if "edit_mgr_idx" not in st.session_state:
     st.session_state.edit_mgr_idx = None
+if "_last_action_msg" not in st.session_state:
+    st.session_state._last_action_msg = None
+if "_gen_team_snapshot" not in st.session_state:
+    st.session_state._gen_team_snapshot = None  # serialised team at last generate
 
 # ─────────────────────────────────────────────
 # Browser localStorage — persist team across sessions
@@ -175,6 +190,15 @@ if not st.session_state._ls_loaded:
     if _saved_mgr and isinstance(_saved_mgr, list) and len(_saved_mgr) > 0:
         st.session_state.managers = _saved_mgr
     st.session_state._ls_loaded = True
+    _n_eng = len(st.session_state.people)
+    _n_mgr = len(st.session_state.managers)
+    if _n_eng > 0 or _n_mgr > 0:
+        _restore_parts = []
+        if _n_eng:
+            _restore_parts.append(f"{_n_eng} engineer{'s' if _n_eng != 1 else ''}")
+        if _n_mgr:
+            _restore_parts.append(f"{_n_mgr} manager{'s' if _n_mgr != 1 else ''}")
+        st.info(f"Team restored from your last session: {', '.join(_restore_parts)}.")
 
 # ─────────────────────────────────────────────
 # Sidebar — Schedule configuration
@@ -225,14 +249,20 @@ with st.sidebar:
     st.markdown("---")
     st.header("📥 Load Sample Team")
     if st.button("Load sample dataset"):
-        sample_path = Path(__file__).parent.parent.parent / "data" / "samples" / "team_config.json"
+        sample_path = Path(__file__).parent.parent.parent / "data" / "samples" / "demo_team.json"
         if sample_path.exists():
             import json as _json
             data = _json.loads(sample_path.read_text())
             people_data = data.get("people", [])
+            mgr_data = data.get("managers", [])
             st.session_state.people = people_data
+            st.session_state.managers = mgr_data
             _ls.setItem("oncall_people", people_data)
-            st.success(f"Loaded {len(people_data)} people from sample dataset.")
+            _ls.setItem("oncall_managers", mgr_data)
+            st.success(
+                f"Loaded {len(people_data)} engineers across 3 regions + {len(mgr_data)} managers. "
+                f"Go to the Generate tab to build the schedule."
+            )
         else:
             st.error("Sample file not found.")
 
@@ -258,6 +288,15 @@ tab_team, tab_managers, tab_holidays, tab_generate, tab_schedule, tab_fairness, 
 # ─────────────────────────────────────────────
 with tab_team:
     st.subheader("Team Members")
+
+    # Show flash message from previous action (survives rerun)
+    if st.session_state._last_action_msg:
+        _msg_type, _msg_text = st.session_state._last_action_msg
+        if _msg_type == "success":
+            st.success(_msg_text)
+        elif _msg_type == "warning":
+            st.warning(_msg_text)
+        st.session_state._last_action_msg = None
 
     col_add, col_csv = st.columns([1, 1])
 
@@ -305,8 +344,12 @@ with tab_team:
             with btn_col1:
                 _btn_label = "💾 Save Changes" if _editing else "Add Person"
                 if st.button(_btn_label, type="primary"):
+                    _country_clean = p_country.strip().upper()
+                    _country_valid = len(_country_clean) == 2 and _country_clean.isalpha()
                     if not p_name or not p_country or not p_tz:
                         st.error("Name, Country and Timezone are required.")
+                    elif not _country_valid:
+                        st.error("Country must be a 2-letter ISO code, e.g. US, GB, IN, IL.")
                     else:
                         import re as _re
                         base_id = _re.sub(r"[^a-z0-9]+", "-", p_name.strip().lower()).strip("-")
@@ -335,10 +378,10 @@ with tab_team:
                         if _editing:
                             st.session_state.people[st.session_state.edit_idx] = person_data
                             st.session_state.edit_idx = None
-                            st.success(f"Updated {p_name}.")
+                            st.session_state._last_action_msg = ("success", f"Updated {p_name}.")
                         else:
                             st.session_state.people.append(person_data)
-                            st.success(f"Added {p_name} (ID: `{new_id}`).")
+                            st.session_state._last_action_msg = ("success", f"Added {p_name} (ID: {new_id}).")
 
                         _ls.setItem("oncall_people", st.session_state.people)
                         st.rerun()
@@ -352,17 +395,14 @@ with tab_team:
         csv_upload = st.file_uploader("Upload people.csv", type=["csv"], key="people_csv")
         if csv_upload is not None:
             try:
-                df_preview = pd.read_csv(csv_upload, dtype=str).fillna("")
-                st.caption(f"{len(df_preview)} rows found in **{csv_upload.name}**")
-                st.dataframe(df_preview[["id", "name", "country", "regions"]].head(10), use_container_width=True)
-                if len(df_preview) > 10:
-                    st.caption(f"... and {len(df_preview) - 10} more rows")
-
-                if st.button(f"✅ Import {len(df_preview)} people", type="primary", key="btn_import_csv"):
+                _df_prev = pd.read_csv(csv_upload, dtype=str).fillna("")
+                # Caption + button immediately after uploader — no table between them
+                st.caption(f"{len(_df_prev)} rows · **{csv_upload.name}**")
+                if st.button(f"✅ Import {len(_df_prev)} people", type="primary", key="btn_import_csv"):
                     added = 0
                     skipped = []
                     existing_ids = {p["id"] for p in st.session_state.people}
-                    for _, row in df_preview.iterrows():
+                    for _, row in _df_prev.iterrows():
                         pid = str(row.get("id", "")).strip()
                         name = str(row.get("name", "")).strip()
                         if not pid or not name:
@@ -387,11 +427,15 @@ with tab_team:
                         })
                         existing_ids.add(pid)
                         added += 1
-                    st.success(f"Imported {added} people.")
+                    st.session_state._last_action_msg = ("success", f"Imported {added} people from {csv_upload.name}.")
                     for msg in skipped:
                         st.warning(msg)
                     _ls.setItem("oncall_people", st.session_state.people)
                     st.rerun()
+                # Preview in a collapsed expander — doesn't push button out of view
+                with st.expander("Preview data"):
+                    _preview_cols = [c for c in ["id", "name", "country", "regions"] if c in _df_prev.columns]
+                    st.dataframe(_df_prev[_preview_cols].head(10), use_container_width=True, hide_index=True)
             except Exception as exc:
                 st.error(f"Failed to read CSV: {exc}")
 
@@ -501,10 +545,10 @@ with tab_managers:
                     if _editing_mgr:
                         st.session_state.managers[st.session_state.edit_mgr_idx] = mgr_data
                         st.session_state.edit_mgr_idx = None
-                        st.success(f"Updated {m_name}.")
+                        st.session_state._last_action_msg = ("success", f"Updated {m_name}.")
                     else:
                         st.session_state.managers.append(mgr_data)
-                        st.success(f"Added manager {m_name}.")
+                        st.session_state._last_action_msg = ("success", f"Added manager {m_name}.")
                     _ls.setItem("oncall_managers", st.session_state.managers)
                     st.rerun()
         with mbtn2:
@@ -578,12 +622,29 @@ with tab_managers:
                     _ls.setItem("oncall_managers", st.session_state.managers)
                     st.rerun()
 
-        if st.button("🗑 Clear All Managers", type="secondary", key="btn_clear_mgrs"):
-            st.session_state.managers = []
-            st.session_state.edit_mgr_idx = None
-            _ls.setItem("oncall_managers", [])
-            st.rerun()
+        if "confirm_clear_mgrs" not in st.session_state:
+            st.session_state.confirm_clear_mgrs = False
+
+        if not st.session_state.confirm_clear_mgrs:
+            if st.button("🗑 Clear All Managers", type="secondary", key="btn_clear_mgrs"):
+                st.session_state.confirm_clear_mgrs = True
+                st.rerun()
+        else:
+            st.warning("This will remove all managers. Are you sure?")
+            _mc_yes, _mc_no = st.columns(2)
+            with _mc_yes:
+                if st.button("Yes, clear all", type="primary", key="btn_clear_mgrs_yes"):
+                    st.session_state.managers = []
+                    st.session_state.edit_mgr_idx = None
+                    st.session_state.confirm_clear_mgrs = False
+                    _ls.setItem("oncall_managers", [])
+                    st.rerun()
+            with _mc_no:
+                if st.button("Cancel", key="btn_clear_mgrs_no"):
+                    st.session_state.confirm_clear_mgrs = False
+                    st.rerun()
     else:
+        st.session_state.confirm_clear_mgrs = False if "confirm_clear_mgrs" in st.session_state else None
         st.info("No managers yet. Add managers above or upload a CSV.")
 
 
@@ -700,6 +761,9 @@ with tab_generate:
 
                 st.session_state.result = result
                 st.session_state.team = team
+                st.session_state._gen_team_snapshot = json.dumps(
+                    [p for p in st.session_state.people], sort_keys=True
+                )
 
                 # Generate manager rotation if managers are configured
                 if st.session_state.managers:
@@ -751,12 +815,50 @@ with tab_schedule:
     if st.session_state.result is None:
         st.info("Generate a schedule first.")
     else:
+        if _schedule_is_stale():
+            st.warning("Your team has changed since the last Generate — re-generate to update the schedule.")
         result = st.session_state.result
         team = st.session_state.team
         _result_json = result.model_dump_json()
         _team_json   = team.model_dump_json()
         _mgr_result_json = st.session_state.mgr_result.model_dump_json() if st.session_state.mgr_result else ""
         _mgr_team_json   = st.session_state.mgr_team.model_dump_json() if st.session_state.mgr_team else ""
+
+        # "This week" on-call callout
+        _today = date.today()
+        _this_week_assignments = [
+            a for a in result.schedule.assignments
+            if a.week_start <= _today <= a.week_end
+        ]
+        _next_week_assignments = [
+            a for a in result.schedule.assignments
+            if a.week_start > _today
+        ]
+        _current_assignments = _this_week_assignments or (
+            _next_week_assignments[:len(set(a.region for a in result.schedule.assignments if a.region) or {"global"})]
+            if _next_week_assignments else []
+        )
+        if _current_assignments:
+            _person_map_cw = {p.id: p for p in team.people}
+            _label = "This week" if _this_week_assignments else f"Next up from {_next_week_assignments[0].week_start}"
+            _callout_parts = []
+            for _ca in _current_assignments:
+                _primary_cw = _person_map_cw.get(_ca.primary_id)
+                _part = f"**{_primary_cw.name if _primary_cw else 'Unassigned'}**"
+                if _ca.region:
+                    _part += f" ({_ca.region})"
+                _callout_parts.append(_part)
+            _callout = f"📋 {_label}: {' · '.join(_callout_parts)}"
+            if st.session_state.mgr_result:
+                _mgr_map_cw = {p.id: p for p in st.session_state.mgr_team.people}
+                _mgr_assignments_cw = [
+                    a for a in st.session_state.mgr_result.schedule.assignments
+                    if a.week_start <= _today <= a.week_end
+                ] or st.session_state.mgr_result.schedule.assignments[:1]
+                if _mgr_assignments_cw:
+                    _mgr_person = _mgr_map_cw.get(_mgr_assignments_cw[0].primary_id)
+                    _callout += f" · Manager: **{_mgr_person.name if _mgr_person else 'Unassigned'}**"
+            st.info(_callout)
 
         # Summary line
         n_weeks = len(result.schedule.assignments)
@@ -840,6 +942,8 @@ with tab_fairness:
     if st.session_state.result is None:
         st.info("Generate a schedule first.")
     else:
+        if _schedule_is_stale():
+            st.warning("Your team has changed since the last Generate — re-generate to update the schedule.")
         result = st.session_state.result
         team = st.session_state.team
         _result_json = result.model_dump_json()
@@ -910,20 +1014,42 @@ with tab_violations:
         errors = [v for v in violations if v.severity == "error"]
         warnings = [v for v in violations if v.severity == "warning"]
 
+        _VIOLATION_LABELS = {
+            "NO_PRIMARY_CANDIDATE": "No one available for primary on-call",
+            "NO_BACKUP_CANDIDATE": "No one available for backup on-call",
+            "BLACKOUT_VIOLATION": "Person assigned during their blackout period",
+            "PRIMARY_EQUALS_BACKUP": "Primary and backup are the same person",
+            "UNKNOWN_PERSON": "Unknown person ID in assignment",
+            "REGION_MISMATCH": "Assigned person cannot cover this region",
+            "GAP_TOO_SHORT": "On-call gap too short — minimum rest period not met",
+            "HOLIDAY_ON_DUTY": "Person has a national holiday during their on-call week",
+            "MAX_SHIFTS_EXCEEDED": "Person exceeds their maximum shifts per year",
+        }
+
         col_e, col_w = st.columns(2)
-        col_e.metric("Errors", len(errors), delta=None)
-        col_w.metric("Warnings", len(warnings), delta=None)
+        with col_e:
+            if errors:
+                st.error(f"**{len(errors)} error{'s' if len(errors) != 1 else ''}** (schedule needs attention)")
+            else:
+                st.success("0 errors")
+        with col_w:
+            if warnings:
+                st.warning(f"**{len(warnings)} warning{'s' if len(warnings) != 1 else ''}** (review recommended)")
+            else:
+                st.success("0 warnings")
 
         if errors:
-            st.error("**Errors** (must fix):")
+            st.error("**Errors** — these weeks may not have coverage:")
             for v in errors:
-                st.write(f"- `[{v.code}]` {v.message}")
+                _label = _VIOLATION_LABELS.get(v.code, v.code)
+                st.write(f"- **{_label}**: {v.message}")
         if warnings:
-            st.warning("**Warnings** (review recommended):")
+            st.warning("**Warnings** — review recommended:")
             for v in warnings:
-                st.write(f"- `[{v.code}]` {v.message}")
+                _label = _VIOLATION_LABELS.get(v.code, v.code)
+                st.write(f"- **{_label}**: {v.message}")
         if not violations:
-            st.success("No violations found! Schedule is constraint-clean.")
+            st.success("No violations found. Schedule is constraint-clean.")
 
 # ─────────────────────────────────────────────
 # TAB: Export
@@ -934,6 +1060,8 @@ with tab_export:
     if st.session_state.result is None:
         st.info("Generate a schedule first.")
     else:
+        if _schedule_is_stale():
+            st.warning("Your team has changed since the last Generate — re-generate to update the schedule.")
         result = st.session_state.result
         team = st.session_state.team
         _result_json = result.model_dump_json()

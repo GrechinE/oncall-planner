@@ -28,9 +28,11 @@ class PersonFairnessRow:
 def compute_fairness(result: "ScheduleResult", team: "TeamConfig") -> list[PersonFairnessRow]:
     """Build a fairness report for every person in the team."""
     assignments = result.schedule.assignments
-    total_weeks = len(assignments)
     n_people = len(team.people)
-    expected = total_weeks / n_people if n_people else 0
+    # For multi-region schedules each calendar week produces N assignment rows (one per
+    # region). Use unique calendar weeks so that expected = calendar_weeks / people.
+    unique_weeks = len({a.week_start for a in assignments})
+    expected = unique_weeks / n_people if n_people else 0
 
     rows = []
     for person in team.people:
