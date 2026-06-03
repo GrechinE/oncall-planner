@@ -3,12 +3,16 @@ Holiday fetching for the OnCall Planner.
 
 Primary source: `holidays` Python library (60+ countries, offline, fast).
 Fallback: Nager.Date public API (for countries not in the library).
+
+For countries where the eve (day before) a public holiday is also a non-working
+day (e.g. Israel), eves are automatically added to the returned dict with a
+" (Eve)" suffix so they appear in the schedule calendar.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from functools import lru_cache
 from typing import Optional
 
@@ -24,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 NAGER_BASE_URL = "https://date.nager.at/api/v3/PublicHolidays"
 
+# Countries where the eve (day before) each public holiday is also non-working.
+# For these countries, eves are automatically inserted into the returned dict.
+_COUNTRIES_WITH_HOLIDAY_EVES: frozenset[str] = frozenset({"IL"})
+
 # Countries supported by the `holidays` library (representative list)
 _HOLIDAYS_LIB_COUNTRIES = {
     "AR", "AU", "AT", "BY", "BE", "BR", "CA", "CL", "CN", "CO", "HR", "CZ",
@@ -35,10 +43,26 @@ _HOLIDAYS_LIB_COUNTRIES = {
 }
 
 
+def _add_holiday_eves(holidays: dict[date, str]) -> dict[date, str]:
+    """
+    Return a new dict that includes the original holidays plus the eve (day before)
+    of each holiday entry.  If the eve date is already in the dict (e.g. a multi-day
+    holiday like Rosh Hashana where day-2 eve == day-1 holiday), it is not overwritten.
+    Eve entries get a " (Eve)" suffix on the name.
+    """
+    eves: dict[date, str] = {}
+    for d, name in holidays.items():
+        eve = d - timedelta(days=1)
+        if eve not in holidays and eve not in eves:
+            eves[eve] = f"{name} (Eve)"
+    return {**holidays, **eves}
+
+
 def get_public_holidays(country: str, year: int) -> frozenset[date]:
     """
     Return a frozenset of public holiday dates for the given country and year.
     Uses `holidays` library first; falls back to Nager.Date API.
+    Includes holiday eves for countries in _COUNTRIES_WITH_HOLIDAY_EVES.
     """
     country = country.upper()
     named = get_public_holidays_with_names(country, year)
@@ -55,6 +79,8 @@ def get_public_holidays_with_names(country: str, year: int) -> Optional[dict[dat
     """
     Return a dict of {date: holiday_name} for the given country and year.
     Returns None if no data is available from any source.
+    For countries in _COUNTRIES_WITH_HOLIDAY_EVES, the eve of each holiday is
+    also included (e.g. Israel: erev Yom Kippur is a non-working day).
     Only successful (non-None) results are cached to prevent stale None entries.
     """
     country = country.upper()
@@ -65,6 +91,8 @@ def get_public_holidays_with_names(country: str, year: int) -> Optional[dict[dat
     if result is None:
         result = _fetch_from_nager_with_names(country, year)
     if result is not None:
+        if country in _COUNTRIES_WITH_HOLIDAY_EVES:
+            result = _add_holiday_eves(result)
         _holiday_cache[key] = result
     return result
 

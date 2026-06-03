@@ -1,5 +1,5 @@
 from datetime import date
-from src.scheduler.holidays import get_public_holidays, person_has_holiday_in_week
+from src.scheduler.holidays import get_public_holidays, get_public_holidays_with_names, person_has_holiday_in_week
 
 
 def test_us_independence_day_2026():
@@ -20,6 +20,39 @@ def test_in_republic_day_2026():
 def test_il_has_holidays_2026():
     holidays = get_public_holidays("IL", 2026)
     assert len(holidays) > 0
+
+
+def test_il_includes_holiday_eves():
+    from src.scheduler.holidays import _holiday_cache
+    _holiday_cache.clear()
+    named = get_public_holidays_with_names("IL", 2026)
+    # Yom Kippur is Sep 21; its eve (Sep 20) must be present
+    assert date(2026, 9, 20) in named
+    assert "(Eve)" in named[date(2026, 9, 20)]
+    # Yom Kippur itself must still be present
+    assert date(2026, 9, 21) in named
+    assert "(Eve)" not in named[date(2026, 9, 21)]
+
+
+def test_il_rosh_hashana_eve_no_duplicate():
+    # Rosh Hashana is a 2-day holiday: Sep 12 + Sep 13.
+    # Eve of Sep 12 = Sep 11 (should be added).
+    # Eve of Sep 13 = Sep 12 (already the holiday itself — must not be overwritten).
+    from src.scheduler.holidays import _holiday_cache
+    _holiday_cache.clear()
+    named = get_public_holidays_with_names("IL", 2026)
+    assert date(2026, 9, 11) in named        # eve of day-1 added
+    assert "(Eve)" in named[date(2026, 9, 11)]
+    assert date(2026, 9, 12) in named        # day-1 holiday still present
+    assert "(Eve)" not in named[date(2026, 9, 12)]  # not overwritten with "(Eve)"
+
+
+def test_us_has_no_eves():
+    from src.scheduler.holidays import _holiday_cache
+    _holiday_cache.clear()
+    named = get_public_holidays_with_names("US", 2026)
+    eves = [v for v in named.values() if "(Eve)" in v]
+    assert eves == []
 
 
 def test_gb_has_holidays_2026():
