@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import pandas as pd
 import streamlit as st
 
-from src.scheduler.exporter import export_to_csv, export_to_excel, build_schedule_dataframe
+from src.scheduler.exporter import export_to_csv, export_to_excel, export_to_ical, build_schedule_dataframe
 from src.scheduler.fairness import compute_fairness
 from src.scheduler.generator import ScheduleGenerator
 from src.scheduler.holidays import get_public_holidays, get_public_holidays_with_names
@@ -73,6 +73,14 @@ def _cached_export_csv(result_json: str, people_json: str) -> str:
     result = ScheduleResult.model_validate_json(result_json)
     team   = TeamConfig.model_validate_json(people_json)
     return export_to_csv(result, team)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_export_ical(result_json: str, people_json: str) -> str:
+    from src.scheduler.models import ScheduleResult, TeamConfig
+    result = ScheduleResult.model_validate_json(result_json)
+    team   = TeamConfig.model_validate_json(people_json)
+    return export_to_ical(result, team)
 
 # ─────────────────────────────────────────────
 # Page config
@@ -598,7 +606,7 @@ with tab_export:
         _result_json = result.model_dump_json()
         _team_json   = team.model_dump_json()
 
-        col_xl, col_csv_btn = st.columns(2)
+        col_xl, col_csv_btn, col_ical = st.columns(3)
 
         with col_xl:
             xlsx_bytes = _cached_export_excel(_result_json, _team_json)
@@ -616,6 +624,15 @@ with tab_export:
                 data=csv_str,
                 file_name="oncall_schedule.csv",
                 mime="text/csv",
+            )
+
+        with col_ical:
+            ical_str = _cached_export_ical(_result_json, _team_json)
+            st.download_button(
+                label="⬇️ Download iCal (.ics)",
+                data=ical_str,
+                file_name="oncall_schedule.ics",
+                mime="text/calendar",
             )
 
         st.markdown("---")

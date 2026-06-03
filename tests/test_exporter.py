@@ -1,7 +1,7 @@
 import io
 import pandas as pd
 from src.scheduler.generator import ScheduleGenerator
-from src.scheduler.exporter import export_to_excel, export_to_csv, build_schedule_dataframe
+from src.scheduler.exporter import export_to_excel, export_to_csv, export_to_ical, build_schedule_dataframe
 from src.scheduler.validator import validate
 
 
@@ -60,6 +60,30 @@ def test_export_sanitises_formula_injection(simple_team):
     # Safe values must pass through unchanged
     for safe_val in ["Alice Smith", "US", "americas", ""]:
         assert _safe(safe_val) == safe_val
+
+
+def test_export_to_ical_returns_string(simple_team):
+    result = ScheduleGenerator(simple_team).generate()
+    ical = export_to_ical(result, simple_team)
+    assert isinstance(ical, str)
+    assert "BEGIN:VCALENDAR" in ical
+    assert "END:VCALENDAR" in ical
+
+
+def test_export_to_ical_event_count(simple_team):
+    result = ScheduleGenerator(simple_team).generate()
+    ical = export_to_ical(result, simple_team)
+    event_count = ical.count("BEGIN:VEVENT")
+    assert event_count == len(result.schedule.assignments)
+
+
+def test_export_to_ical_event_structure(simple_team):
+    result = ScheduleGenerator(simple_team).generate()
+    ical = export_to_ical(result, simple_team)
+    assert "DTSTART;VALUE=DATE:" in ical
+    assert "DTEND;VALUE=DATE:" in ical
+    assert "SUMMARY:On-Call:" in ical
+    assert "UID:" in ical
 
 
 def test_export_csv_formula_injection_in_name(simple_team):
