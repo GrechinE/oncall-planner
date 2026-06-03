@@ -688,15 +688,25 @@ with tab_holidays:
     if st.button("Fetch Holidays"):
         country_upper = h_country.strip().upper()
         with st.spinner(f"Fetching holidays for {country_upper} {int(h_year)}..."):
+            from datetime import timedelta as _td
             hdays = get_public_holidays_with_names(country_upper, int(h_year))
-            source = "offline library"
+            # Apply holiday eves inline — countries where the eve is also non-working.
+            # Done here so it works even if the holidays module is cached at an old version.
+            _EVE_COUNTRIES = {"IL"}
+            if hdays is not None and country_upper in _EVE_COUNTRIES:
+                _eves = {}
+                for _d, _name in hdays.items():
+                    _eve = _d - _td(days=1)
+                    if _eve not in hdays and _eve not in _eves:
+                        _eves[_eve] = f"{_name} (Eve)"
+                hdays = {**hdays, **_eves}
 
             if hdays:
                 rows = sorted(hdays.items())
                 df_h = pd.DataFrame(rows, columns=["Date", "Holiday Name"])
                 df_h["Day"] = df_h["Date"].apply(lambda d: d.strftime("%A"))
                 df_h = df_h[["Date", "Day", "Holiday Name"]]
-                st.success(f"{len(hdays)} non-working days for {country_upper} {int(h_year)} (source: {source}).")
+                st.success(f"{len(hdays)} non-working days for {country_upper} {int(h_year)}.")
                 st.dataframe(df_h, use_container_width=True)
             else:
                 st.warning(
@@ -709,10 +719,19 @@ with tab_holidays:
         st.subheader("Team Holiday Summary")
         countries = list({p["country"] for p in st.session_state.people})
         year = start_date.year
+        from datetime import timedelta as _td2
+        _EVE_COUNTRIES2 = {"IL"}
         for c in sorted(countries):
             hnamed = _cached_holidays(c.upper(), year)
+            if hnamed is not None and c.upper() in _EVE_COUNTRIES2:
+                _eves2 = {}
+                for _d2, _n2 in hnamed.items():
+                    _eve2 = _d2 - _td2(days=1)
+                    if _eve2 not in hnamed and _eve2 not in _eves2:
+                        _eves2[_eve2] = f"{_n2} (Eve)"
+                hnamed = {**hnamed, **_eves2}
             count = len(hnamed) if hnamed else 0
-            with st.expander(f"**{c}** — {count} holidays in {year}"):
+            with st.expander(f"**{c}** — {count} non-working days in {year}"):
                 if hnamed:
                     rows = sorted(hnamed.items())
                     df_c = pd.DataFrame(rows, columns=["Date", "Holiday Name"])
