@@ -40,7 +40,7 @@ from src.ui.themes import THEMES, detect_theme, inject_theme
 # Cached helpers — only recompute when inputs change
 # ─────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def _cached_holidays(country: str, year: int):
+def _cached_holidays(country: str, year: int, _v: int = 2):
     return get_public_holidays_with_names(country.upper(), year)
 
 
@@ -690,19 +690,14 @@ with tab_holidays:
         with st.spinner(f"Fetching holidays for {country_upper} {int(h_year)}..."):
             from src.scheduler.holidays import (
                 _HOLIDAYS_LIB_COUNTRIES, _HOLIDAYS_LIB_AVAILABLE,
-                _fetch_from_lib_with_names, _fetch_from_nager_with_names,
-                get_public_holidays_with_names, _holiday_cache,
+                _fetch_from_lib_with_names, _holiday_cache,
+                get_public_holidays_with_names,
             )
-            # Determine source label for display
-            _holiday_cache.pop((country_upper, int(h_year)), None)
-            source = None
-            if _fetch_from_lib_with_names(country_upper, int(h_year)) is not None:
-                source = "offline library"
-            elif _fetch_from_nager_with_names(country_upper, int(h_year)) is not None:
-                source = "Nager.Date API"
-            # Use the canonical function so eves are included for IL etc.
+            # Clear module-level cache so we get a fresh result
             _holiday_cache.pop((country_upper, int(h_year)), None)
             hdays = get_public_holidays_with_names(country_upper, int(h_year))
+            # Determine source label for display only
+            source = "offline library" if country_upper in _HOLIDAYS_LIB_COUNTRIES and _fetch_from_lib_with_names(country_upper, int(h_year)) is not None else "Nager.Date API"
 
             if hdays:
                 rows = sorted(hdays.items())
