@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pandas as pd
 import streamlit as st
+from streamlit_local_storage import LocalStorage
 
 from src.scheduler.exporter import export_to_csv, export_to_excel, export_to_ical, build_schedule_dataframe
 from src.scheduler.fairness import compute_fairness
@@ -104,6 +105,19 @@ if "result" not in st.session_state:
     st.session_state.result = None
 if "team" not in st.session_state:
     st.session_state.team = None
+if "_ls_loaded" not in st.session_state:
+    st.session_state._ls_loaded = False
+
+# ─────────────────────────────────────────────
+# Browser localStorage — persist team across sessions
+# ─────────────────────────────────────────────
+_ls = LocalStorage()
+
+if not st.session_state._ls_loaded:
+    _saved = _ls.getItem("oncall_people")
+    if _saved and isinstance(_saved, list) and len(_saved) > 0:
+        st.session_state.people = _saved
+    st.session_state._ls_loaded = True
 
 # ─────────────────────────────────────────────
 # Sidebar — Schedule configuration
@@ -222,6 +236,7 @@ with tab_team:
                         "max_shifts_per_year": int(p_max) if p_max > 0 else None,
                     })
                     st.success(f"Added {p_name} (ID: `{new_id}`).")
+                    _ls.setItem("oncall_people", st.session_state.people)
                     st.rerun()
 
     with col_csv:
@@ -266,6 +281,7 @@ with tab_team:
                     st.success(f"Imported {added} people.")
                     for msg in skipped:
                         st.warning(msg)
+                    _ls.setItem("oncall_people", st.session_state.people)
                     st.rerun()
             except Exception as exc:
                 st.error(f"Failed to read CSV: {exc}")
@@ -286,6 +302,7 @@ with tab_team:
             with col_del:
                 if st.button("✕", key=f"del_{i}", help=f"Remove {p['name']}"):
                     st.session_state.people.pop(i)
+                    _ls.setItem("oncall_people", st.session_state.people)
                     st.rerun()
 
         st.markdown("---")
@@ -301,6 +318,7 @@ with tab_team:
                 if st.button("Yes, clear all", type="primary"):
                     st.session_state.people = []
                     st.session_state.confirm_clear = False
+                    _ls.setItem("oncall_people", [])
                     st.rerun()
             with col_no:
                 if st.button("Cancel"):
