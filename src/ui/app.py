@@ -43,8 +43,6 @@ def _cached_holidays(country: str, year: int):
 
 @st.cache_data(show_spinner=False)
 def _cached_schedule_df(result_json: str, people_json: str) -> pd.DataFrame:
-    """Build the schedule dataframe from JSON-serialised inputs so st.cache_data can hash them."""
-    import json as _json
     from src.scheduler.models import ScheduleResult, TeamConfig
     result = ScheduleResult.model_validate_json(result_json)
     team   = TeamConfig.model_validate_json(people_json)
@@ -53,7 +51,6 @@ def _cached_schedule_df(result_json: str, people_json: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def _cached_fairness(result_json: str, people_json: str):
-    import json as _json
     from src.scheduler.models import ScheduleResult, TeamConfig
     result = ScheduleResult.model_validate_json(result_json)
     team   = TeamConfig.model_validate_json(people_json)
@@ -83,6 +80,14 @@ def _cached_export_ical(result_json: str, people_json: str) -> str:
     team   = TeamConfig.model_validate_json(people_json)
     return export_to_ical(result, team)
 
+
+def _next_monday() -> date:
+    today = date.today()
+    days_ahead = (7 - today.weekday()) % 7  # weekday(): Mon=0, Sun=6
+    days_ahead = days_ahead if days_ahead > 0 else 7
+    return today + timedelta(days=days_ahead)
+
+
 # ─────────────────────────────────────────────
 # Page config
 # ─────────────────────────────────────────────
@@ -96,6 +101,23 @@ st.set_page_config(
 st.title("📅 OnCall Planner")
 st.caption("Fair, holiday-aware on-call scheduling for any global team — engineering, ops, support, and more.")
 
+with st.expander("👋 How it works", expanded=False):
+    st.markdown(
+        """
+        **Three steps to a complete on-call schedule:**
+
+        1. **Team tab** — add your team members (or upload a CSV). Each person needs a name, country, and timezone.
+        2. **Generate tab** — set your date range and click Generate. The engine assigns shifts fairly, avoiding national holidays automatically.
+        3. **Export tab** — download as Excel, CSV, or iCal to import into Google Calendar / Outlook.
+
+        **Tips:**
+        - Leave *Regions* blank if your whole team shares one global rotation.
+        - Use *Backup On-Call* toggle (sidebar) or the button in the Schedule tab to add a backup layer on demand.
+        - The Fairness tab shows how evenly shifts are distributed across the team.
+        - Your team is saved in your browser — no login needed, no data leaves your device.
+        """
+    )
+
 # ─────────────────────────────────────────────
 # Session state defaults
 # ─────────────────────────────────────────────
@@ -107,6 +129,8 @@ if "team" not in st.session_state:
     st.session_state.team = None
 if "_ls_loaded" not in st.session_state:
     st.session_state._ls_loaded = False
+if "edit_idx" not in st.session_state:
+    st.session_state.edit_idx = None
 
 # ─────────────────────────────────────────────
 # Browser localStorage — persist team across sessions
@@ -125,27 +149,34 @@ if not st.session_state._ls_loaded:
 with st.sidebar:
     st.header("⚙️ Schedule Settings")
 
-    start_date = st.date_input("Start Date", value=date(2026, 1, 4))
-    end_date = st.date_input("End Date", value=date(2026, 12, 27))
-    shift_duration = st.number_input("Shift Duration (days)", min_value=1, max_value=28, value=7)
-    shift_start = st.selectbox("Shift Start Day", ["sunday", "monday"])
-    min_gap = st.number_input("Min Gap Between Shifts (weeks)", min_value=1, max_value=12, value=4)
+    _default_start = _next_monday()
+    _default_end = date(_default_start.year, 12, 31)
+    # Snap end to last Sunday/Saturday of year based on shift start day preference
+    start_date = st.date_input("Start Date", value=_default_start,
+                               help="First day of the first on-call week. Defaults to next Monday.")
+    end_date = st.date_input("End Date", value=_default_end,
+                             help="Shifts are generated up to (and including) this date.")
 
-    st.subheader("Regions")
-    regions_input = st.text_input(
-        "Required regions (comma-separated)",
-        value="",
-        help="Leave blank for a single global rotation (everyone in one pool). "
-             "Fill in e.g. 'americas, emea, apac' only if different groups cover different customers.",
-    )
-    required_regions = [r.strip() for r in regions_input.split(",") if r.strip()]
+    with st.expander("Advanced settings", expanded=False):
+        shift_duration = st.number_input("Shift Duration (days)", min_value=1, max_value=28, value=7,
+                                         help="How many days each on-call shift lasts. Default: 7 (weekly).")
+        shift_start = st.selectbox("Shift Start Day", ["sunday", "monday"],
+                                   help="Which day of the week a new shift begins.")
+        min_gap = st.number_input("Min Gap Between Shifts (weeks)", min_value=1, max_value=12, value=4,
+                                  help="Minimum number of weeks between two primary shifts for the same person.")
 
-    st.subheader("Backup On-Call")
-    generate_backup = st.toggle(
-        "Generate backup during schedule generation",
-        value=False,
-        help="Off = primary-only schedule. Use the 'Generate Backup' button in the Schedule tab to add backup on demand.",
-    )
+        regions_input = st.text_input(
+            "Regions (comma-separated)",
+            value="",
+            help="Leave blank for a single global pool. Use e.g. 'americas, emea, apac' only if different people cover different geographies.",
+        )
+        required_regions = [r.strip() for r in regions_input.split(",") if r.strip()]
+
+        generate_backup = st.toggle(
+            "Generate backup on-call",
+            value=False,
+            help="Off = primary-only. Add backup on demand from the Schedule tab.",
+        )
 
     st.markdown("---")
     st.header("📥 Load Sample Team")
@@ -156,6 +187,7 @@ with st.sidebar:
             data = _json.loads(sample_path.read_text())
             people_data = data.get("people", [])
             st.session_state.people = people_data
+            _ls.setItem("oncall_people", people_data)
             st.success(f"Loaded {len(people_data)} people from sample dataset.")
         else:
             st.error("Sample file not found.")
@@ -167,6 +199,7 @@ with st.sidebar:
         data = json.loads(uploaded.read())
         if "people" in data:
             st.session_state.people = data["people"]
+            _ls.setItem("oncall_people", data["people"])
             st.success(f"Loaded {len(st.session_state.people)} people.")
 
 # ─────────────────────────────────────────────
@@ -185,58 +218,90 @@ with tab_team:
     col_add, col_csv = st.columns([1, 1])
 
     with col_add:
-        with st.expander("➕ Add Person", expanded=len(st.session_state.people) == 0):
-            p_name = st.text_input("Full Name", key="new_name")
-            p_country = st.text_input("Country (ISO code, e.g. US, IL, IN)", key="new_country", max_chars=3)
-            p_tz = st.text_input("Timezone (IANA, e.g. America/New_York)", key="new_tz")
+        # Determine if we're editing an existing person
+        _editing = st.session_state.edit_idx is not None
+        _edit_person = st.session_state.people[st.session_state.edit_idx] if _editing else {}
 
-            # Regions: multiselect from the configured regions + optional free-text extras
+        with st.expander(
+            f"✏️ Edit: {_edit_person.get('name', '')}" if _editing else "➕ Add Person",
+            expanded=_editing or len(st.session_state.people) == 0
+        ):
+            p_name = st.text_input("Full Name", value=_edit_person.get("name", ""), key="new_name")
+            p_country = st.text_input("Country (ISO code, e.g. US, IL, IN)", value=_edit_person.get("country", ""),
+                                      key="new_country", max_chars=3)
+            p_tz = st.text_input("Timezone (IANA, e.g. America/New_York)", value=_edit_person.get("timezone", ""),
+                                 key="new_tz")
+
             region_options = required_regions if required_regions else []
+            _existing_regions = _edit_person.get("regions", [])
             p_regions_selected = st.multiselect(
                 "Regions",
                 options=region_options,
+                default=[r for r in _existing_regions if r in region_options],
                 help="Select all regions this person can cover.",
                 key="new_regions_multi",
             )
+            _extra_defaults = ", ".join(r for r in _existing_regions if r not in region_options)
             p_regions_extra = st.text_input(
                 "Additional regions not listed above (comma-separated)",
+                value=_extra_defaults,
                 key="new_regions_extra",
                 help="Leave blank if all regions are already selected above.",
             )
 
-            p_skills = st.text_input("Skills (comma-separated)", key="new_skills")
-            p_blackouts = st.text_input("Blackout Dates (YYYY-MM-DD, comma-separated)", key="new_blackouts")
-            p_max = st.number_input("Max Shifts/Year (0 = unlimited)", min_value=0, value=12, key="new_max")
+            p_skills = st.text_input("Skills (comma-separated)",
+                                     value=", ".join(_edit_person.get("skills", [])), key="new_skills")
+            p_blackouts = st.text_input("Blackout Dates (YYYY-MM-DD, comma-separated)",
+                                        value=", ".join(_edit_person.get("blackout_dates", [])), key="new_blackouts")
+            _max_default = _edit_person.get("max_shifts_per_year") or 12
+            p_max = st.number_input("Max Shifts/Year (0 = unlimited)", min_value=0, value=int(_max_default),
+                                    key="new_max")
 
-            if st.button("Add Person"):
-                if not p_name or not p_country or not p_tz:
-                    st.error("Name, Country and Timezone are required.")
-                else:
-                    # Auto-generate ID from name slug; append suffix if collision
-                    import re as _re
-                    base_id = _re.sub(r"[^a-z0-9]+", "-", p_name.strip().lower()).strip("-")
-                    existing_ids = {p["id"] for p in st.session_state.people}
-                    new_id = base_id
-                    counter = 2
-                    while new_id in existing_ids:
-                        new_id = f"{base_id}-{counter}"
-                        counter += 1
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                _btn_label = "💾 Save Changes" if _editing else "Add Person"
+                if st.button(_btn_label, type="primary"):
+                    if not p_name or not p_country or not p_tz:
+                        st.error("Name, Country and Timezone are required.")
+                    else:
+                        import re as _re
+                        base_id = _re.sub(r"[^a-z0-9]+", "-", p_name.strip().lower()).strip("-")
+                        existing_ids = {p["id"] for i, p in enumerate(st.session_state.people)
+                                        if not _editing or i != st.session_state.edit_idx}
+                        new_id = base_id
+                        counter = 2
+                        while new_id in existing_ids:
+                            new_id = f"{base_id}-{counter}"
+                            counter += 1
 
-                    extra_regions = [r.strip() for r in p_regions_extra.split(",") if r.strip()]
-                    all_regions = list(dict.fromkeys(p_regions_selected + extra_regions))
+                        extra_regions = [r.strip() for r in p_regions_extra.split(",") if r.strip()]
+                        all_regions = list(dict.fromkeys(p_regions_selected + extra_regions))
 
-                    st.session_state.people.append({
-                        "id": new_id,
-                        "name": p_name,
-                        "country": p_country.upper(),
-                        "timezone": p_tz,
-                        "regions": all_regions,
-                        "skills": [s.strip() for s in p_skills.split(",") if s.strip()],
-                        "blackout_dates": [b.strip() for b in p_blackouts.split(",") if b.strip()],
-                        "max_shifts_per_year": int(p_max) if p_max > 0 else None,
-                    })
-                    st.success(f"Added {p_name} (ID: `{new_id}`).")
-                    _ls.setItem("oncall_people", st.session_state.people)
+                        person_data = {
+                            "id": _edit_person.get("id", new_id) if _editing else new_id,
+                            "name": p_name,
+                            "country": p_country.upper(),
+                            "timezone": p_tz,
+                            "regions": all_regions,
+                            "skills": [s.strip() for s in p_skills.split(",") if s.strip()],
+                            "blackout_dates": [b.strip() for b in p_blackouts.split(",") if b.strip()],
+                            "max_shifts_per_year": int(p_max) if p_max > 0 else None,
+                        }
+
+                        if _editing:
+                            st.session_state.people[st.session_state.edit_idx] = person_data
+                            st.session_state.edit_idx = None
+                            st.success(f"Updated {p_name}.")
+                        else:
+                            st.session_state.people.append(person_data)
+                            st.success(f"Added {p_name} (ID: `{new_id}`).")
+
+                        _ls.setItem("oncall_people", st.session_state.people)
+                        st.rerun()
+
+            with btn_col2:
+                if _editing and st.button("Cancel", type="secondary"):
+                    st.session_state.edit_idx = None
                     st.rerun()
 
     with col_csv:
@@ -290,18 +355,24 @@ with tab_team:
         st.session_state.confirm_clear = False
 
     if st.session_state.people:
+        st.markdown(f"**{len(st.session_state.people)} team members**")
         for i, p in enumerate(st.session_state.people):
-            col_data, col_del = st.columns([12, 1])
+            col_data, col_edit, col_del = st.columns([11, 1, 1])
             with col_data:
                 st.write(
                     f"**{p['name']}** ({p['id']}) — {p['country']} · {p['timezone']} · "
                     f"regions: {', '.join(p.get('regions', [])) or '—'} · "
-                    f"skills: {', '.join(p.get('skills', [])) or '—'} · "
                     f"max shifts: {p.get('max_shifts_per_year') or '∞'}"
                 )
+            with col_edit:
+                if st.button("✏️", key=f"edit_{i}", help=f"Edit {p['name']}"):
+                    st.session_state.edit_idx = i
+                    st.rerun()
             with col_del:
                 if st.button("✕", key=f"del_{i}", help=f"Remove {p['name']}"):
                     st.session_state.people.pop(i)
+                    if st.session_state.edit_idx == i:
+                        st.session_state.edit_idx = None
                     _ls.setItem("oncall_people", st.session_state.people)
                     st.rerun()
 
@@ -318,6 +389,7 @@ with tab_team:
                 if st.button("Yes, clear all", type="primary"):
                     st.session_state.people = []
                     st.session_state.confirm_clear = False
+                    st.session_state.edit_idx = None
                     _ls.setItem("oncall_people", [])
                     st.rerun()
             with col_no:
@@ -339,7 +411,7 @@ with tab_holidays:
     with col_h1:
         h_country = st.text_input("Country code", value="US", max_chars=3)
     with col_h2:
-        h_year = st.number_input("Year", value=2026, min_value=2020, max_value=2035)
+        h_year = st.number_input("Year", value=start_date.year, min_value=2020, max_value=2035)
 
     if st.button("Fetch Holidays"):
         country_upper = h_country.strip().upper()
@@ -365,7 +437,6 @@ with tab_holidays:
                 st.success(f"{len(hdays)} holidays for {country_upper} {int(h_year)} (source: {source}).")
                 st.dataframe(df_h, use_container_width=True)
             else:
-                # Give actionable diagnostics
                 if not _HOLIDAYS_LIB_AVAILABLE:
                     st.warning("The `holidays` Python library is not installed.")
                 elif country_upper not in _HOLIDAYS_LIB_COUNTRIES:
@@ -410,9 +481,10 @@ with tab_generate:
     elif start_date >= end_date:
         st.error("End date must be after start date.")
     else:
+        total_weeks = ((end_date - start_date).days // 7) + 1
         st.write(f"**Team size:** {len(st.session_state.people)} people")
-        st.write(f"**Period:** {start_date} → {end_date}")
-        st.write(f"**Regions:** {', '.join(required_regions) if required_regions else 'global'}")
+        st.write(f"**Period:** {start_date} → {end_date} (~{total_weeks} weeks)")
+        st.write(f"**Regions:** {', '.join(required_regions) if required_regions else 'global (single pool)'}")
         st.write(f"**Shift:** {shift_duration} days, starting {shift_start}, min gap {min_gap} weeks")
 
         if st.button("⚡ Generate Schedule", type="primary"):
@@ -439,12 +511,12 @@ with tab_generate:
 
                 errors = sum(1 for v in result.violations if v.severity == "error")
                 warnings = sum(1 for v in result.violations if v.severity == "warning")
-                total_weeks = len(result.schedule.assignments)
+                n_weeks = len(result.schedule.assignments)
 
                 if errors == 0:
                     st.success(
-                        f"Schedule generated: {total_weeks} assignments, "
-                        f"0 errors, {warnings} warnings."
+                        f"Schedule generated: {n_weeks} weeks ({start_date} → {end_date}), "
+                        f"0 errors, {warnings} warnings. Head to the Schedule tab to review."
                     )
                 else:
                     st.error(
@@ -468,6 +540,15 @@ with tab_schedule:
         _result_json = result.model_dump_json()
         _team_json   = team.model_dump_json()
 
+        # Summary line — fix #5
+        n_weeks = len(result.schedule.assignments)
+        cfg = result.schedule.config
+        st.caption(
+            f"{n_weeks} weeks · {cfg.start_date} → {cfg.end_date} · "
+            f"{len(team.people)} people · "
+            f"{'regions: ' + ', '.join(cfg.required_regions) if cfg.required_regions else 'global rotation'}"
+        )
+
         has_backup = any(a.backup_id for a in result.schedule.assignments)
         if not has_backup:
             if st.button("➕ Generate Backup On-Call", type="secondary"):
@@ -480,11 +561,8 @@ with tab_schedule:
                         people=team.people,
                     )
                     with st.spinner("Assigning backup on-call..."):
-                        # Re-run generation with backup enabled and graft backup_ids
-                        # onto the existing primary assignments
                         from src.scheduler.generator import ScheduleGenerator as _SG
                         full_result = _SG(backup_team).generate()
-                        # Map week_start+region -> backup_id from the full run
                         backup_map = {
                             (a.week_start, a.region): a.backup_id
                             for a in full_result.schedule.assignments
@@ -507,18 +585,15 @@ with tab_schedule:
 
         df_sched = _cached_schedule_df(_result_json, _team_json)
 
-        # Replace "UNASSIGNED" with a more visible marker for the UI
         if "Primary" in df_sched.columns:
             df_sched["Primary"] = df_sched["Primary"].replace("UNASSIGNED", "⚠️ UNASSIGNED")
 
-        # Filter by region only when regions are configured
         active_regions = result.schedule.config.required_regions
         if active_regions and "Region" in df_sched.columns:
             filter_region = st.selectbox("Filter by region", ["all"] + active_regions)
             if filter_region != "all":
                 df_sched = df_sched[df_sched["Region"] == filter_region]
 
-        # Show all rows — height = 35px per row + 38px header
         row_height = 35 * len(df_sched) + 38
         col_cfg = {
             "Week Start":      st.column_config.TextColumn(width="small"),
