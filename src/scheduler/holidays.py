@@ -89,7 +89,10 @@ def get_public_holidays(country: str, year: int) -> frozenset[date]:
     return frozenset(named.keys())
 
 
-_holiday_cache: dict[tuple[str, int], Optional[dict[date, str]]] = {}
+# Increment this when the holiday logic changes — busts all in-process caches.
+_CACHE_VERSION = 2
+
+_holiday_cache: dict[tuple[str, int, int], Optional[dict[date, str]]] = {}
 
 
 def get_public_holidays_with_names(country: str, year: int) -> Optional[dict[date, str]]:
@@ -98,10 +101,9 @@ def get_public_holidays_with_names(country: str, year: int) -> Optional[dict[dat
     Returns None if no data is available from any source.
     For countries in _COUNTRIES_WITH_HOLIDAY_EVES, the eve of each holiday is
     also included (e.g. Israel: erev Yom Kippur is a non-working day).
-    Only successful (non-None) results are cached to prevent stale None entries.
     """
     country = country.upper()
-    key = (country, year)
+    key = (country, year, _CACHE_VERSION)
     if key in _holiday_cache:
         return _holiday_cache[key]
     result = _fetch_from_lib_with_names(country, year)

@@ -40,7 +40,7 @@ from src.ui.themes import THEMES, detect_theme, inject_theme
 # Cached helpers — only recompute when inputs change
 # ─────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def _cached_holidays(country: str, year: int, _v: int = 2):
+def _cached_holidays(country: str, year: int, _v: int = 3):
     return get_public_holidays_with_names(country.upper(), year)
 
 
