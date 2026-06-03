@@ -1,122 +1,73 @@
 {
   "schedule": {
-    "start_date": "2026-01-01",
-    "end_date": "2026-12-31",
+    "start_date": "2026-01-05",
+    "end_date": "2026-12-27",
     "shift_duration_days": 7,
-    "shift_start_day": "sunday",
-    "min_gap_between_shifts_weeks": 2,
-    "required_regions": ["americas", "emea", "apac"]
+    "shift_start_day": "monday",
+    "min_gap_between_shifts_weeks": 3,
+    "required_regions": [],
+    "generate_backup": false
   },
   "people": [
     {
-      "id": "avi",
-      "name": "Avi Cohen",
-      "country": "IL",
-      "timezone": "Asia/Jerusalem",
-      "regions": ["emea"],
-      "skills": ["product-a", "product-b"],
-      "blackout_dates": ["2026-09-21", "2026-09-22", "2026-09-23"],
-      "max_shifts_per_year": 15
+      "id": "alice-chen",
+      "name": "Alice Chen",
+      "country": "US",
+      "timezone": "America/New_York",
+      "regions": [],
+      "skills": [],
+      "blackout_dates": ["2026-07-04"],
+      "max_shifts_per_year": null
     },
     {
-      "id": "priya",
-      "name": "Priya Sharma",
+      "id": "bob-kumar",
+      "name": "Bob Kumar",
       "country": "IN",
       "timezone": "Asia/Kolkata",
-      "regions": ["apac", "emea"],
-      "skills": ["product-a", "product-c"],
-      "blackout_dates": ["2026-11-01", "2026-11-02"],
-      "max_shifts_per_year": 15
-    },
-    {
-      "id": "carlos",
-      "name": "Carlos Mendez",
-      "country": "MX",
-      "timezone": "America/Mexico_City",
-      "regions": ["americas"],
-      "skills": ["product-b", "product-c"],
-      "blackout_dates": ["2026-12-24", "2026-12-25", "2026-12-26"],
-      "max_shifts_per_year": 15
-    },
-    {
-      "id": "lucas",
-      "name": "Lucas Oliveira",
-      "country": "BR",
-      "timezone": "America/Sao_Paulo",
-      "regions": ["americas"],
-      "skills": ["product-a", "product-b"],
+      "regions": [],
+      "skills": [],
       "blackout_dates": [],
-      "max_shifts_per_year": 15
+      "max_shifts_per_year": null
     },
     {
-      "id": "sarah",
-      "name": "Sarah Johnson",
-      "country": "US",
-      "timezone": "America/Chicago",
-      "regions": ["americas", "emea"],
-      "skills": ["product-a", "product-b", "product-c"],
-      "blackout_dates": ["2026-07-04", "2026-07-05", "2026-11-26", "2026-11-27"],
-      "max_shifts_per_year": 15
+      "id": "carol-levy",
+      "name": "Carol Levy",
+      "country": "IL",
+      "timezone": "Asia/Jerusalem",
+      "regions": [],
+      "skills": [],
+      "blackout_dates": [],
+      "max_shifts_per_year": null
     },
     {
-      "id": "akira",
-      "name": "Akira Tanaka",
-      "country": "JP",
-      "timezone": "Asia/Tokyo",
-      "regions": ["apac"],
-      "skills": ["product-a", "product-c"],
-      "blackout_dates": ["2026-01-01", "2026-01-02", "2026-01-03"],
-      "max_shifts_per_year": 15
+      "id": "dan-okafor",
+      "name": "Dan Okafor",
+      "country": "GB",
+      "timezone": "Europe/London",
+      "regions": [],
+      "skills": [],
+      "blackout_dates": ["2026-12-25", "2026-12-26"],
+      "max_shifts_per_year": null
     },
     {
-      "id": "elena",
+      "id": "elena-popescu",
       "name": "Elena Popescu",
       "country": "RO",
       "timezone": "Europe/Bucharest",
-      "regions": ["emea"],
-      "skills": ["product-b", "product-c"],
+      "regions": [],
+      "skills": [],
       "blackout_dates": [],
-      "max_shifts_per_year": 15
+      "max_shifts_per_year": null
     },
     {
-      "id": "james",
-      "name": "James Okafor",
-      "country": "GB",
-      "timezone": "Europe/London",
-      "regions": ["emea", "americas"],
-      "skills": ["product-a", "product-b"],
-      "blackout_dates": ["2026-12-25", "2026-12-26"],
-      "max_shifts_per_year": 15
-    },
-    {
-      "id": "wei",
-      "name": "Wei Zhang",
-      "country": "CN",
-      "timezone": "Asia/Shanghai",
-      "regions": ["apac"],
-      "skills": ["product-b", "product-c"],
-      "blackout_dates": ["2026-02-17", "2026-02-18", "2026-02-19"],
-      "max_shifts_per_year": 15
-    },
-    {
-      "id": "maria",
-      "name": "Maria Santos",
-      "country": "BR",
-      "timezone": "America/Sao_Paulo",
-      "regions": ["americas", "apac"],
-      "skills": ["product-a", "product-c"],
+      "id": "felix-mendez",
+      "name": "Felix Mendez",
+      "country": "MX",
+      "timezone": "America/Mexico_City",
+      "regions": [],
+      "skills": [],
       "blackout_dates": [],
-      "max_shifts_per_year": 15
-    },
-    {
-      "id": "sung",
-      "name": "Sung Park",
-      "country": "KR",
-      "timezone": "Asia/Seoul",
-      "regions": ["apac"],
-      "skills": ["product-a", "product-b"],
-      "blackout_dates": [],
-      "max_shifts_per_year": 15
+      "max_shifts_per_year": null
     }
   ]
 }

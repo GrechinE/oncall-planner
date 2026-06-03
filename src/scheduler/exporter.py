@@ -213,7 +213,7 @@ def export_to_ical(
         ]
 
     lines.append("END:VCALENDAR")
-    ical = "\r\n".join(lines) + "\r\n"
+    ical = "\r\n".join(_ical_fold(line) for line in lines) + "\r\n"
 
     if output_path:
         Path(output_path).write_text(ical, encoding="utf-8")
@@ -221,8 +221,32 @@ def export_to_ical(
 
 
 def _ical_escape(value: str) -> str:
-    """Escape special characters for iCalendar text values."""
-    return value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    """Escape special characters for iCalendar text values (RFC 5545 §3.3.11)."""
+    return (
+        value
+        .replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+    )
+
+
+def _ical_fold(line: str) -> str:
+    """Fold long iCal lines at 75 octets per RFC 5545 §3.1 using CRLF + SPACE."""
+    encoded = line.encode("utf-8")
+    if len(encoded) <= 75:
+        return line
+    # Fold at 75-octet boundaries, continuing lines start with a single space
+    chunks = []
+    while len(encoded) > 75:
+        # Find the largest split point that doesn't break a multi-byte char
+        split = 75
+        while split > 0 and (encoded[split] & 0xC0) == 0x80:
+            split -= 1
+        chunks.append(encoded[:split].decode("utf-8"))
+        encoded = encoded[split:]
+    chunks.append(encoded.decode("utf-8"))
+    return "\r\n ".join(chunks)
 
 
 _WIDE_COLUMNS = {"team holidays", "notes"}

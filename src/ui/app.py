@@ -23,14 +23,14 @@ from streamlit_local_storage import LocalStorage
 from src.scheduler.exporter import export_to_csv, export_to_excel, export_to_ical, build_schedule_dataframe
 from src.scheduler.fairness import compute_fairness
 from src.scheduler.generator import ScheduleGenerator
-from src.scheduler.holidays import get_public_holidays, get_public_holidays_with_names
+from src.scheduler.holidays import get_public_holidays_with_names
 from src.scheduler.models import (
     Person,
     ScheduleConfig,
     ShiftStartDay,
     TeamConfig,
 )
-from src.scheduler.validator import validate, violations_summary_text
+from src.scheduler.validator import validate
 
 
 # ─────────────────────────────────────────────
@@ -371,8 +371,11 @@ with tab_team:
             with col_del:
                 if st.button("✕", key=f"del_{i}", help=f"Remove {p['name']}"):
                     st.session_state.people.pop(i)
-                    if st.session_state.edit_idx == i:
-                        st.session_state.edit_idx = None
+                    if st.session_state.edit_idx is not None:
+                        if st.session_state.edit_idx == i:
+                            st.session_state.edit_idx = None
+                        elif st.session_state.edit_idx > i:
+                            st.session_state.edit_idx -= 1
                     _ls.setItem("oncall_people", st.session_state.people)
                     st.rerun()
 
