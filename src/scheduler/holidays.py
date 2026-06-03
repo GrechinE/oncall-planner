@@ -58,6 +58,23 @@ def _add_holiday_eves(holidays: dict[date, str]) -> dict[date, str]:
     return {**holidays, **eves}
 
 
+def get_non_working_days_with_names(country: str, year: int) -> Optional[dict[date, str]]:
+    """
+    Public entry point for the Holidays UI tab.
+    Returns raw holidays + eves for countries in _COUNTRIES_WITH_HOLIDAY_EVES.
+    Always fetches fresh (no module-level cache) so the result is never stale.
+    """
+    country = country.upper()
+    raw = _fetch_from_lib_with_names(country, year)
+    if raw is None:
+        raw = _fetch_from_nager_with_names(country, year)
+    if raw is None:
+        return None
+    if country in _COUNTRIES_WITH_HOLIDAY_EVES:
+        return _add_holiday_eves(raw)
+    return raw
+
+
 def get_public_holidays(country: str, year: int) -> frozenset[date]:
     """
     Return a frozenset of public holiday dates for the given country and year.
