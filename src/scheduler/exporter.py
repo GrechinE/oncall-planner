@@ -38,7 +38,10 @@ def _holidays_in_week(countries: list[str], week_start: date, week_end: date) ->
     for country in countries:
         years = {week_start.year, week_end.year}
         for year in years:
-            named = get_public_holidays_with_names(country, year)
+            try:
+                named = get_public_holidays_with_names(country, year)
+            except Exception:
+                named = None
             if not named:
                 continue
             current = week_start
